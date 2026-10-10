@@ -4,6 +4,7 @@ import { CloudClient, ApiError } from './cloudClient'
 import { LeaseAgent } from './leaseAgent'
 import { BrowserHost } from './browserHost'
 import { ExternalKernelHost } from './externalKernelHost'
+import { DockerKernelLauncher, NativeKernelLauncher } from './kernelLauncher'
 import { KernelManager } from './kernelManager'
 import { LocalStore } from './localStore'
 import type { Host, RunningEnv } from './host'
@@ -74,11 +75,16 @@ export class AppService {
       () => this.store.kernelLocalExe,
       (p) => this.emit({ type: 'kernel', status: this.kernelStatus(p) })
     )
-    this.kernelHost = new ExternalKernelHost(async () => {
-      const info = await this.kernelManager.ensureReady()
-      if (!info.exePath) throw new Error('内核不可用')
-      return info.exePath
-    })
+    // ONEBROWSER_KERNEL_DOCKER=1：内核跑在 Docker（无原生内核平台的开发/CI 验证路径）
+    this.kernelHost = process.env.ONEBROWSER_KERNEL_DOCKER === '1'
+      ? new ExternalKernelHost(new DockerKernelLauncher(process.env.ONEBROWSER_KERNEL_IMAGE || 'onebrowser-kernel-smoke'))
+      : new ExternalKernelHost(
+          new NativeKernelLauncher(async () => {
+            const info = await this.kernelManager.ensureReady()
+            if (!info.exePath) throw new Error('内核不可用')
+            return info.exePath
+          })
+        )
     const wireClosed = (h: { onClosed: ((envId: string) => void) | null }): void => {
       h.onClosed = (envId) => {
         if ((this.phases.get(envId)?.phase || 'idle') !== 'evicting') {
@@ -99,6 +105,11 @@ export class AppService {
   /** 任一承载运行中 */
   private isEnvRunning(envId: string): boolean {
     return this.host.isRunning(envId) || this.kernelHost.isRunning(envId)
+  }
+
+  /** docker 内核模式（跳过原生内核就绪检查） */
+  get kernelDockerMode(): boolean {
+    return process.env.ONEBROWSER_KERNEL_DOCKER === '1'
   }
 
   // ---------- 内核 ----------
@@ -286,12 +297,18 @@ export class AppService {
 
   async updateEnv(
     id: string,
-    patch: { name?: string; homepage?: string; proxy?: ProxyConfig; fingerprint?: EnvConfig['fingerprint'] }
+    patch: {
+      name?: string
+      homepage?: string
+      proxy?: ProxyConfig
+      fingerprint?: EnvConfig['fingerprint']
+      hosting?: EnvConfig['hosting']
+    }
   ): Promise<void> {
     const cur = this.envs.get(id)
     if (!cur) throw new Error('环境不存在')
     const configEnc = await sealConfig(this.dek!, id, {
-      hosting: cur.hosting,
+      hosting: patch.hosting !== undefined ? patch.hosting : cur.hosting,
       homepage: patch.homepage !== undefined ? patch.homepage : cur.homepage,
       seed: cur.seed,
       proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy,
@@ -321,8 +338,8 @@ export class AppService {
     if (this.isEnvRunning(envId)) throw new Error('环境已打开')
     const host = this.hostFor(env)
 
-    // kernel 承载：先确保内核就绪（可能触发首次下载）
-    if (env.hosting === 'kernel' && !this.kernelManager.status().ready) {
+    // kernel 承载：先确保内核就绪（可能触发首次下载）；docker 模式无需原生内核
+    if (env.hosting === 'kernel' && !this.kernelDockerMode && !this.kernelManager.status().ready) {
       this.setPhase(envId, 'downloading-kernel', '准备指纹内核（首次需下载，约 200MB）…')
       await this.kernelManager.ensureReady()
       this.emit({ type: 'kernel', status: this.kernelStatus() })

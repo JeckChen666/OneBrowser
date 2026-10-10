@@ -1,15 +1,13 @@
 // 外挂指纹内核承载（kernel 模式）：spawn fingerprint-chromium + CDP 数据面。
 // 快照格式与 builtin 完全一致（结构化 JSON）→ 云端基线双承载互迁移。
-import type { ChildProcess } from 'node:child_process'
-import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
 import { randomId } from './e2e'
-import { freePort } from './kernelManager'
+import type { KernelLauncher } from './kernelLauncher'
 import type { EnvConfig } from '@shared/types'
 import type { Host, KernelRunningEnv, OpenOptions, RunningEnv } from './host'
-import { attachPage, browserClose, CdpConnection, closeTab, newTab, waitEndpoint } from './cdp'
+import { attachPage, CdpConnection, closeTab, newTab } from './cdp'
 import type { StructuredData } from './dataPlane'
 
 /** Electron Cookie 形状（快照内） ↔ CDP cookie 映射（docker 冒烟亦复用） */
@@ -52,7 +50,7 @@ export class ExternalKernelHost implements Host {
   onClosed: ((envId: string) => void) | null = null
 
   constructor(
-    private resolveExe: () => Promise<string>
+    private launcher: KernelLauncher
   ) {}
 
   isRunning(envId: string): boolean {
@@ -63,18 +61,19 @@ export class ExternalKernelHost implements Host {
     return this.running.entries()
   }
 
+  get(envId: string): KernelRunningEnv | undefined {
+    return this.running.get(envId)
+  }
+
   async open(env: EnvConfig, opts: OpenOptions = {}): Promise<RunningEnv> {
     if (this.running.has(env.id)) throw new Error('环境已在运行中')
-    const exe = await this.resolveExe()
     const runToken = randomId()
-    const port = await freePort()
     const userDataDir = path.join(app.getPath('userData'), 'kernel-profiles', `${env.id}-${runToken}`)
     fs.mkdirSync(userDataDir, { recursive: true })
 
     const args: string[] = [
       `--user-data-dir=${userDataDir}`,
       `--fingerprint=${env.seed}`,
-      `--remote-debugging-port=${port}`,
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
@@ -91,54 +90,68 @@ export class ExternalKernelHost implements Host {
       args.push(`--proxy-server=${env.proxy.scheme}://${env.proxy.host}:${env.proxy.port}`)
     }
 
-    const proc = spawn(exe, args, { stdio: 'ignore' })
-    await waitEndpoint(port)
-    const { conn, targetId } = await attachPage(port)
-    await conn.send('Page.enable')
-    await conn.send('Network.enable')
-
-    const re: KernelRunningEnv = { kind: 'kernel', envId: env.id, runToken, proc, port, page: conn, origins: new Set(opts.restore?.origins || []) }
-
-    // origin 跟踪（导航事件）
-    conn.on('Page.frameNavigated', (params: any) => {
-      const url: string = params?.frame?.url || ''
-      if (!/^https?:/.test(url)) return
-      try {
-        re.origins.add(new URL(url).origin)
-      } catch {
-        /* ignore */
-      }
-    })
-
-    const exitHandler = (code: number | null): void => {
-      const cur = this.running.get(env.id)
-      if (cur === re) {
-        this.running.delete(env.id)
-        conn.close()
+    let re: KernelRunningEnv | null = null
+    const launch = await this.launcher.launch(args, () => {
+      if (!re || this.running.get(env.id) === re) {
+        if (re) this.running.delete(env.id)
+        try {
+          re?.page.close()
+        } catch {
+          /* ignore */
+        }
         this.onClosed?.(env.id)
       }
-      void code
-    }
-    proc.once('exit', exitHandler)
+    })
+    try {
+      const { conn } = await attachPage(launch.port)
+      await conn.send('Page.enable')
+      await conn.send('Network.enable')
 
-    this.running.set(env.id, re)
+      re = { kind: 'kernel', envId: env.id, runToken, launch, port: launch.port, page: conn, origins: new Set(opts.restore?.origins || []) }
+      const cur = re
 
-    // 注入登录态（cookie 直写；localStorage 用临时标签页逐 origin 注入）
-    if (opts.restore) {
-      await this.restoreData(re, opts.restore, port)
-    }
+      // origin 跟踪（导航事件）
+      conn.on('Page.frameNavigated', (params: any) => {
+        const url: string = params?.frame?.url || ''
+        if (!/^https?:/.test(url)) return
+        try {
+          cur.origins.add(new URL(url).origin)
+        } catch {
+          /* ignore */
+        }
+      })
 
-    if (env.homepage && /^https?:/.test(env.homepage)) {
-      await conn.send('Page.navigate', { url: env.homepage })
+      this.running.set(env.id, re)
+
+      // 注入登录态（cookie 直写；localStorage 用临时标签页逐 origin 注入）
+      if (opts.restore) {
+        await this.restoreData(re, opts.restore, launch.port)
+      }
+
+      if (env.homepage && /^https?:/.test(env.homepage)) {
+        await conn.send('Page.navigate', { url: env.homepage })
+      }
+      return re
+    } catch (e) {
+      await launch.stop().catch(() => undefined)
+      throw e
     }
-    void targetId
-    return re
   }
 
   /** 数据注入：cookie + localStorage（临时 tab 执行，不打扰用户 tab） */
   private async restoreData(re: KernelRunningEnv, data: StructuredData, port: number): Promise<void> {
     if (data.cookies?.length) {
-      await re.page.send('Storage.setCookies', { cookies: data.cookies.map(snapCookieToCdp) })
+      const payload = data.cookies.map(snapCookieToCdp)
+      try {
+        await re.page.send('Storage.setCookies', { cookies: payload })
+        const got = await re.page.send('Storage.getCookies', {})
+        console.log(
+          `[kernel] cookie 注入 ${payload.length} 条 → 读回 ${got.cookies?.length || 0} 条：`,
+          (got.cookies || []).map((c: { name: string; domain: string; path: string }) => `${c.name}@${c.domain}${c.path}`).join(' ')
+        )
+      } catch (e) {
+        console.warn(`[kernel] Storage.setCookies 失败:`, e instanceof Error ? e.message : e)
+      }
     }
     for (const [origin, kv] of Object.entries(data.localStorage || {})) {
       const entries = Object.entries(kv || {})
@@ -184,14 +197,11 @@ export class ExternalKernelHost implements Host {
     return { cookies: (cookies || []).map(cdpCookieToSnap), localStorage: localStorageOut, origins }
   }
 
-  /** 优雅关闭（Browser.close → 兜底 kill） */
+  /** 优雅关闭（launcher.stop：Browser.close → 兜底强杀/删容器） */
   closeWindow(envId: string): void {
     const re = this.running.get(envId)
     if (!re) return
-    browserClose(re.port).catch(() => re.proc.kill('SIGKILL'))
-    setTimeout(() => {
-      if (this.running.get(envId) === re && re.proc.exitCode === null) re.proc.kill('SIGKILL')
-    }, 5000)
+    re.launch.stop().catch(() => undefined)
   }
 
   closeAll(): void {

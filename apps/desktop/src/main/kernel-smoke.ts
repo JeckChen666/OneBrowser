@@ -8,6 +8,7 @@
 import type { AppService } from './core/appService'
 import { ExternalKernelHost } from './core/externalKernelHost'
 import { snapCookieToCdp } from './core/externalKernelHost'
+import { NativeKernelLauncher } from './core/kernelLauncher'
 import type { KernelRunningEnv } from './core/host'
 import { attachPage, waitEndpoint } from './core/cdp'
 import { execFile as execFileCb } from 'node:child_process'
@@ -91,7 +92,7 @@ export async function runKernelSmoke(svc: AppService): Promise<number> {
   log(`内核：v${info.version}（${info.source}）→ ${info.exePath}`)
   check('内核就绪', !!info.exePath)
 
-  const host = new ExternalKernelHost(async () => info.exePath!)
+  const host = new ExternalKernelHost(new NativeKernelLauncher(async () => info.exePath!))
 
   // 实例 A：seed=11111111，伪装 Windows
   const envA = mockEnv('smoke-a', '11111111')
@@ -141,7 +142,7 @@ function dockerDir(): string {
   return path.resolve(app.getAppPath(), '../../scripts/kernel-docker')
 }
 
-async function ensureDockerImage(): Promise<void> {
+export async function ensureDockerImage(): Promise<void> {
   const dir = dockerDir()
   if (!fs.existsSync(path.join(dir, 'entrypoint.sh'))) throw new Error(`未找到 ${dir}`)
   const bin = await execFileP('find', [path.join(dir, 'kernel'), '-type', 'f', '(', '-name', 'chrome', '-o', '-name', 'chromium', ')']).catch(() => ({ stdout: '' }))

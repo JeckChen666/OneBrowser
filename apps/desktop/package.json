@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "start": "electron-vite preview",
     "e2e": "electron-vite build && electron . --e2e",
-    "e2e:run": "electron . --e2e"
+    "e2e:run": "electron . --e2e",
+    "e2e:interop": "electron-vite build && electron . --e2e-interop",
+    "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

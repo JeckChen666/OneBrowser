@@ -6,7 +6,12 @@ import type { CreateEnvInput, MainEvent, ProxyConfig } from '@shared/types'
 
 const serverUrl = process.env.ONEBROWSER_SERVER || 'http://127.0.0.1:8787'
 const appDir = fileURLToPath(new URL('.', import.meta.url))
-const e2eMode = process.argv.includes('--e2e')
+const e2eMode =
+  process.argv.includes('--e2e') ||
+  process.argv.includes('--e2e-interop') ||
+  process.argv.includes('--kernel-smoke') ||
+  process.argv.includes('--screenshot') ||
+  process.argv.includes('--screenshot-loggedin')
 
 let svc: AppService
 let managerWin: BrowserWindow | null = null
@@ -113,6 +118,19 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--e2e')) {
     const { runE2E } = await import('./e2e-run')
     const code = await runE2E()
+    app.exit(code)
+    return
+  }
+
+  if (process.argv.includes('--e2e-interop')) {
+    process.env.ONEBROWSER_KERNEL_DOCKER = '1' // 必须在构造 AppService 前设置
+    const { runE2EInterop } = await import('./e2e-interop')
+    let code = 1
+    try {
+      code = await runE2EInterop()
+    } catch (e) {
+      console.error('[interop] 异常终止:', e)
+    }
     app.exit(code)
     return
   }
