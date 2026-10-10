@@ -4,6 +4,14 @@
 >
 > 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md)
 
+## ⚠️ 工作流约定（必读）
+
+**[NextStep.md](NextStep.md) 是本项目的唯一「工作指针」，必须持续维护。**
+
+- **开始任何开发工作前**：先读 `NextStep.md`，从「下一步」列表第一项开始，不要凭记忆或猜测决定做什么；
+- **完成一项工作后**：立即更新 `NextStep.md`（移入归档、刷新状态快照），再提交代码；
+- **它必须始终反映真实的下一步**——发现内容与实际不符时，先修正它再动手。
+
 ## 这是什么
 
 一个「环境隔离浏览器 + 登录态云端存储」系统：
