@@ -1,0 +1,33 @@
+{
+  "name": "onebrowser-desktop",
+  "version": "0.1.0",
+  "description": "OneBrowser 桌面端（V0.1.0）",
+  "main": "out/main/index.mjs",
+  "author": "OneBrowser",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "start": "electron-vite preview",
+    "e2e": "electron-vite build && electron . --e2e",
+    "e2e:run": "electron . --e2e"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "electron": "^44.7.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.12"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@noble/hashes": "^2.4.0",
+    "element-plus": "^2.14.7",
+    "vue": "^3.5.43",
+    "ws": "^8.22.0"
+  }
+}

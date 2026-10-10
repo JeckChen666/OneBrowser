@@ -1,0 +1,17 @@
+node_modules/
+dist/
+out/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+bin/
+*.ob.snap.json
+apps/desktop/out/
+apps/desktop/dist/
+
+# 本地开发数据
+.minio-data/
+.v2c/
+.idea/

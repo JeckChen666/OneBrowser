@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "jsx": "preserve",
+    "types": ["vite/client"],
+    "paths": {
+      "@shared/*": ["./src/shared/*"]
+    },
+    "outDir": "out/tsconfig.web.tsbuildinfo",
+    "emitDeclarationOnly": false,
+    "noUnusedLocals": false
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.vue", "src/shared/**/*.ts"]
+}

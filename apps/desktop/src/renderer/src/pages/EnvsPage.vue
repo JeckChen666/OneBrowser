@@ -1,0 +1,319 @@
+<template>
+  <div class="envs-page">
+    <header class="topbar">
+      <div class="title">
+        <h1>🌐 OneBrowser</h1>
+        <el-tag size="small" type="info">{{ state.account.serverUrl }}</el-tag>
+      </div>
+      <div class="account">
+        <span class="email">{{ state.account.email }}</span>
+        <el-tag size="small" effect="plain">设备 {{ state.account.deviceId.slice(0, 8) }}</el-tag>
+        <el-button size="small" @click="refresh">刷新</el-button>
+        <el-button size="small" type="danger" plain @click="logout">登出</el-button>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="toolbar">
+        <el-button type="primary" @click="showCreate = true">＋ 新建环境</el-button>
+        <span class="hint">模式一：打开即从云端基线克隆，关闭即弃（点「保存为基线」更新基线）；模式二：同一时刻仅一台设备可用，他设备打开会接管。</span>
+      </div>
+
+      <el-table :data="state.envs" v-loading="loading" empty-text="还没有环境，先新建一个">
+        <el-table-column label="环境" min-width="200">
+          <template #default="{ row }">
+            <div class="env-name">
+              <b>{{ row.env.name }}</b>
+              <el-tag size="small" :type="row.env.mode === 'snapshot' ? 'success' : 'warning'">
+                {{ row.env.mode === 'snapshot' ? '模式一 · 快照' : '模式二 · 互斥' }}
+              </el-tag>
+            </div>
+            <div class="env-meta">{{ row.env.homepage || '（未设置主页）' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="云端基线" width="150">
+          <template #default="{ row }">
+            <span v-if="row.hasBase">{{ formatTime(row.baseCreatedAt) }}</span>
+            <span v-else class="dim">无（首次登录后保存）</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" min-width="200">
+          <template #default="{ row }">
+            <el-tag v-if="row.phase === 'running'" type="success" size="small">运行中</el-tag>
+            <el-tag v-else-if="row.phase === 'idle'" size="small" type="info">空闲</el-tag>
+            <el-tag v-else size="small" type="warning">{{ phaseText(row.phase) }}</el-tag>
+            <div v-if="row.message" class="env-meta">{{ row.message }}</div>
+            <div v-if="row.leaseHolder && row.phase === 'idle'" class="env-meta">
+              🔒 被设备 {{ row.leaseHolder.slice(0, 8) }} 占用
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="300" fixed="right">
+          <template #default="{ row }">
+            <template v-if="row.phase === 'idle' || row.phase === ''">
+              <el-button size="small" type="primary" @click="open(row.env.id)">
+                {{ row.env.mode === 'exclusive' ? '打开 / 接管' : '打开' }}
+              </el-button>
+              <el-button size="small" @click="edit(row)">编辑</el-button>
+              <el-popconfirm title="删除该环境及其云端数据？" @confirm="del(row.env.id)">
+                <template #reference>
+                  <el-button size="small" type="danger" plain>删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+            <template v-else-if="row.phase === 'running'">
+              <el-button size="small" type="primary" plain @click="saveBase(row.env.id)">保存为基线</el-button>
+              <el-button size="small" type="warning" plain @click="close(row.env.id)">
+                {{ row.env.mode === 'exclusive' ? '保存并关闭' : '关闭（丢弃改动）' }}
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" disabled>处理中…</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
+    </main>
+
+    <el-dialog v-model="showCreate" title="新建环境" width="520">
+      <el-form label-width="110px">
+        <el-form-item label="名称" required>
+          <el-input v-model="form.name" placeholder="例如：我的 B 站号" />
+        </el-form-item>
+        <el-form-item label="模式" required>
+          <el-radio-group v-model="form.mode">
+            <el-radio value="snapshot">模式一 · 快照分支</el-radio>
+            <el-radio value="exclusive">模式二 · 互斥接管</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="主页">
+          <el-input v-model="form.homepage" placeholder="http://127.0.0.1:18080" />
+        </el-form-item>
+        <el-form-item label="代理（可选）">
+          <div class="proxy-row">
+            <el-select v-model="proxy.scheme" style="width: 90px">
+              <el-option value="http" label="http" />
+              <el-option value="socks5" label="socks5" />
+            </el-select>
+            <el-input v-model="proxy.host" placeholder="host" style="flex: 1" />
+            <el-input-number v-model="proxy.port" :min="1" :max="65535" placeholder="端口" style="width: 110px" />
+          </div>
+          <div class="proxy-row" style="margin-top: 6px">
+            <el-input v-model="proxy.username" placeholder="用户名（可选）" style="flex: 1" />
+            <el-input v-model="proxy.password" type="password" placeholder="密码（可选）" style="flex: 1" />
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCreate = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="create">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showEdit" title="编辑环境" width="480">
+      <el-form label-width="90px">
+        <el-form-item label="名称">
+          <el-input v-model="editForm.name" />
+        </el-form-item>
+        <el-form-item label="主页">
+          <el-input v-model="editForm.homepage" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { reactive, ref } from 'vue'
+import { ElNotification } from 'element-plus'
+import type { AppState, EnvMode, EnvView, ProxyConfig } from '@shared/types'
+import { ob } from '../api'
+
+const props = defineProps<{ state: AppState }>()
+const emit = defineEmits<{ refresh: [] }>()
+
+const loading = ref(false)
+const creating = ref(false)
+const showCreate = ref(false)
+const showEdit = ref(false)
+const editing = ref<EnvView | null>(null)
+
+const form = reactive<{ name: string; mode: EnvMode; homepage: string }>({
+  name: '',
+  mode: 'snapshot',
+  homepage: 'http://127.0.0.1:18080'
+})
+const proxy = reactive<Required<Pick<ProxyConfig, 'scheme' | 'host' | 'port'>> & Partial<ProxyConfig>>({
+  scheme: 'http',
+  host: '',
+  port: 1080,
+  username: '',
+  password: ''
+})
+const editForm = reactive({ name: '', homepage: '' })
+
+async function guard(fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn()
+  } catch (e) {
+    ElNotification.error({ title: '操作失败', message: String(e) })
+  }
+}
+
+async function refresh(): Promise<void> {
+  loading.value = true
+  await guard(async () => {
+    /* 状态经事件推送；这里触发一次主进程刷新 */
+    await ob.getState()
+  })
+  loading.value = false
+  emit('refresh')
+}
+
+async function logout(): Promise<void> {
+  await guard(() => ob.logout())
+  emit('refresh')
+}
+
+async function create(): Promise<void> {
+  if (!form.name) {
+    ElNotification.warning('请填写环境名称')
+    return
+  }
+  creating.value = true
+  const p: ProxyConfig | undefined = proxy.host
+    ? {
+        scheme: proxy.scheme,
+        host: proxy.host,
+        port: proxy.port,
+        ...(proxy.username ? { username: proxy.username } : {}),
+        ...(proxy.password ? { password: proxy.password } : {})
+      }
+    : undefined
+  await guard(async () => {
+    await ob.createEnv({ name: form.name, mode: form.mode, homepage: form.homepage, proxy: p })
+    showCreate.value = false
+    form.name = ''
+  })
+  creating.value = false
+}
+
+function edit(row: EnvView): void {
+  editing.value = row
+  editForm.name = row.env.name
+  editForm.homepage = row.env.homepage
+  showEdit.value = true
+}
+
+async function saveEdit(): Promise<void> {
+  if (!editing.value) return
+  creating.value = true
+  await guard(async () => {
+    await ob.updateEnv(editing.value!.env.id, { name: editForm.name, homepage: editForm.homepage })
+    showEdit.value = false
+  })
+  creating.value = false
+}
+
+async function open(id: string): Promise<void> {
+  await guard(() => ob.openEnv(id))
+}
+async function close(id: string): Promise<void> {
+  await guard(() => ob.closeEnv(id))
+}
+async function saveBase(id: string): Promise<void> {
+  await guard(() => ob.saveBase(id))
+}
+async function del(id: string): Promise<void> {
+  await guard(() => ob.deleteEnv(id))
+}
+
+function phaseText(p: string): string {
+  const map: Record<string, string> = {
+    opening: '打开中…',
+    acquiring: '获取租约…',
+    'waiting-evict': '等待对方下线…',
+    saving: '上传快照…',
+    evicting: '被接管，保存中…',
+    closing: '关闭中…'
+  }
+  return map[p] || p
+}
+
+function formatTime(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+</script>
+
+<style scoped>
+.envs-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  background: #fff;
+  border-bottom: 1px solid #e4e7ed;
+  padding: 12px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.title h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.email {
+  font-size: 13px;
+  color: #606266;
+}
+.content {
+  padding: 20px 24px;
+  overflow: auto;
+}
+.toolbar {
+  margin-bottom: 14px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.hint {
+  font-size: 12px;
+  color: #8492a6;
+}
+.env-name {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.env-meta {
+  font-size: 12px;
+  color: #8492a6;
+  margin-top: 3px;
+}
+.dim {
+  color: #c0c4cc;
+  font-size: 12px;
+}
+.proxy-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+</style>

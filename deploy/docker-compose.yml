@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: onebrowser-postgres
+    environment:
+      POSTGRES_USER: onebrowser
+      POSTGRES_PASSWORD: onebrowser
+      POSTGRES_DB: onebrowser
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onebrowser -d onebrowser"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+# 说明：本地 S3（MinIO）由 scripts/dev-infra.sh 以原生二进制启动（:9000）。
+# MinIO 官方 Docker 镜像自 2025 年起停止在 Docker Hub 分发；生产环境替换为任意
+# S3 兼容服务（S3/OSS/COS/R2）即可，服务端零改动（环境变量切换）。
+volumes:
+  pgdata:
