@@ -1,4 +1,5 @@
 // 应用服务：编排全部核心模块（auth/envs/快照/租约/窗口），并对渲染进程提供 IPC 面。
+import net from 'node:net'
 import os from 'node:os'
 import { CloudClient, ApiError } from './cloudClient'
 import { LeaseAgent } from './leaseAgent'
@@ -110,6 +111,67 @@ export class AppService {
   /** docker 内核模式（跳过原生内核就绪检查） */
   get kernelDockerMode(): boolean {
     return process.env.ONEBROWSER_KERNEL_DOCKER === '1'
+  }
+
+  // ---------- 指纹解析（seed / auto(按代理出口 geo) / manual） ----------
+
+  private async resolveFingerprint(env: EnvConfig): Promise<{
+    seed: string
+    platform?: string
+    timezone?: string
+    lang?: string
+  }> {
+    const fp = env.fingerprint || {}
+    const tzMode = fp.timezoneMode ?? (fp.timezone ? 'manual' : 'seed')
+    const langMode = fp.langMode ?? (fp.lang ? 'manual' : 'seed')
+    const out: { seed: string; platform?: string; timezone?: string; lang?: string } = {
+      seed: env.seed,
+      platform: fp.platform
+    }
+    const needGeo = tzMode === 'auto' || langMode === 'auto'
+    const geo = needGeo ? await this.geoLookup(env.proxy).catch(() => null) : null
+    if (tzMode === 'manual' && fp.timezone) out.timezone = fp.timezone
+    else if (tzMode === 'auto' && geo?.timezone) out.timezone = geo.timezone
+    if (langMode === 'manual' && fp.lang) out.lang = fp.lang
+    else if (langMode === 'auto' && geo?.lang) out.lang = geo.lang
+    if (needGeo && !geo) this.notify('warning', '地理位置查询失败，时区/语言回退为跟随种子')
+    return out
+  }
+
+  /** 经（可选）代理查询出口 IP 的地理信息。
+   * 注意：刻意不走 Electron/Chromium 网络栈——setProxy(<-loopback) 会污染
+   * 网络服务的后续请求（V0.2.0-S3 排障记录），故用 Node 原生 socket 实现
+   * HTTP 代理 GET（socks 代理暂不支持 auto，回退种子模式）。 */
+  private async geoLookup(proxy?: ProxyConfig): Promise<{ ip: string; timezone: string; lang: string } | null> {
+    try {
+      const target = new URL(this.serverUrl + '/v1/geo')
+      if (!proxy?.host || proxy.scheme === 'socks5') {
+        const resp = await fetch(target, { signal: AbortSignal.timeout(5000) })
+        const geo = (await resp.json()) as { ip?: string; timezone?: string; lang?: string }
+        return { ip: String(geo.ip || ''), timezone: String(geo.timezone || ''), lang: String(geo.lang || '') }
+      }
+      const viaProxy = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(proxy.port, proxy.host, () => {
+          socket.write(
+            `GET ${target.href} HTTP/1.1\r\nHost: ${target.host}\r\nConnection: close\r\n\r\n`
+          )
+        })
+        socket.setTimeout(5000, () => {
+          socket.destroy()
+          reject(new Error('geo 查询超时'))
+        })
+        let data = ''
+        socket.on('data', (chunk) => (data += chunk.toString()))
+        socket.on('end', () => resolve(data))
+        socket.on('error', reject)
+      })
+      const body = viaProxy.slice(viaProxy.indexOf('\r\n\r\n') + 4)
+      const geo = JSON.parse(body) as { ip?: string; timezone?: string; lang?: string }
+      return { ip: String(geo.ip || ''), timezone: String(geo.timezone || ''), lang: String(geo.lang || '') }
+    } catch (e) {
+      console.warn('[geo] 查询失败:', e instanceof Error ? e.message : e)
+      return null
+    }
   }
 
   // ---------- 内核 ----------
@@ -286,7 +348,7 @@ export class AppService {
     const configEnc = await sealConfig(this.dek!, id, {
       hosting,
       homepage: input.homepage,
-      seed: randomId(),
+      seed: input.seed || randomId(),
       proxy: input.proxy,
       fingerprint: input.fingerprint,
     })
@@ -337,6 +399,7 @@ export class AppService {
     if (!env) throw new Error('环境不存在')
     if (this.isEnvRunning(envId)) throw new Error('环境已打开')
     const host = this.hostFor(env)
+    const fingerprint = await this.resolveFingerprint(env)
 
     // kernel 承载：先确保内核就绪（可能触发首次下载）；docker 模式无需原生内核
     if (env.hosting === 'kernel' && !this.kernelDockerMode && !this.kernelManager.status().ready) {
@@ -347,12 +410,10 @@ export class AppService {
 
     if (env.mode === 'snapshot') {
       this.setPhase(envId, 'opening')
+      console.log(`[openEnv] ${envId} 下载基线…`)
       const restore = await this.downloadBase(envId)
-      await host.open(env, {
-        restore,
-        hidden,
-        fingerprint: { seed: env.seed, ...env.fingerprint }
-      })
+      console.log(`[openEnv] ${envId} 打开（hosting=${env.hosting}, restore=${!!restore}）`)
+      await host.open(env, { restore, hidden, fingerprint })
       this.setPhase(
         envId,
         'running',
@@ -376,11 +437,7 @@ export class AppService {
     const restore = outcome.snapshotId
       ? await this.downloadSnapshot(envId, outcome.snapshotId)
       : await this.downloadBase(envId)
-    await host.open(env, {
-      restore,
-      hidden,
-      fingerprint: { seed: env.seed, ...env.fingerprint }
-    })
+    await host.open(env, { restore, hidden, fingerprint })
     this.agent.startHeartbeat(envId)
     this.setPhase(envId, 'running', outcome.stale ? '已接管（旧基线：对方设备未及时上传）' : '已接管')
     this.notify('success', `已打开互斥环境「${env.name}」`)

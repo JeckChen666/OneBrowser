@@ -12,10 +12,15 @@ export interface ProxyConfig {
   password?: string
 }
 
+/** 指纹覆盖项的三态：seed=跟随种子；auto=按代理出口 IP 地理推导；manual=显式指定 */
+export type FpMode = 'seed' | 'auto' | 'manual'
+
 /** 指纹配置（kernel 模式；seed 驱动整套指纹，其余为覆盖项） */
 export interface FingerprintConfig {
   platform?: string // fingerprint-platform：Windows / macOS / Linux
-  timezone?: string // 空 = 由 seed/后续 auto 决定
+  timezoneMode?: FpMode
+  timezone?: string // manual 时的值；旧数据无 mode 但有值视为 manual
+  langMode?: FpMode
   lang?: string
 }
 
@@ -97,6 +102,7 @@ export interface CreateEnvInput {
   homepage: string
   proxy?: ProxyConfig
   fingerprint?: FingerprintConfig
+  seed?: string // 测试用：指定种子（缺省随机）
 }
 
 export interface KernelStatus {

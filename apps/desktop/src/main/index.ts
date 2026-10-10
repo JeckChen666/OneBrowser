@@ -9,6 +9,7 @@ const appDir = fileURLToPath(new URL('.', import.meta.url))
 const e2eMode =
   process.argv.includes('--e2e') ||
   process.argv.includes('--e2e-interop') ||
+  process.argv.includes('--e2e-fp') ||
   process.argv.includes('--kernel-smoke') ||
   process.argv.includes('--screenshot') ||
   process.argv.includes('--screenshot-loggedin')
@@ -130,6 +131,19 @@ app.whenReady().then(async () => {
       code = await runE2EInterop()
     } catch (e) {
       console.error('[interop] 异常终止:', e)
+    }
+    app.exit(code)
+    return
+  }
+
+  if (process.argv.includes('--e2e-fp')) {
+    process.env.ONEBROWSER_KERNEL_DOCKER = '1'
+    const { runE2EFingerprint } = await import('./e2e-fingerprint')
+    let code = 1
+    try {
+      code = await runE2EFingerprint()
+    } catch (e) {
+      console.error('[fp-e2e] 异常终止:', e)
     }
     app.exit(code)
     return

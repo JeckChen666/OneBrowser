@@ -11,7 +11,7 @@ import { deriveAuthKey, deriveKEK, unwrapDEK } from './core/e2e'
 import { open as openSnapshot } from './core/snapshotEngine'
 import { restoreCookies, restoreLocalStorage } from './core/dataPlane'
 import { ensureDockerImage } from './kernel-smoke'
-import type { CdpConnection } from './core/cdp'
+import type { CanSend } from './core/cdp'
 import type { MainEvent } from '@shared/types'
 
 /** 宿主机局域网 IP：内核在 Docker 容器内访问宿主服务（127.0.0.1 在容器内不可达宿主） */
@@ -64,7 +64,7 @@ interface Whoami {
 
 // --- CDP 侧辅助（kernel 环境） ---
 
-async function cdpEval(page: CdpConnection, expression: string): Promise<any> {
+async function cdpEval(page: CanSend, expression: string): Promise<any> {
   const res = await page.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
   if (res.exceptionDetails) {
     throw new Error(String(res.exceptionDetails.exception?.description || res.exceptionDetails.text || 'eval 异常'))
@@ -72,13 +72,13 @@ async function cdpEval(page: CdpConnection, expression: string): Promise<any> {
   return res.result?.value
 }
 
-async function cdpWhoami(page: CdpConnection): Promise<Whoami> {
+async function cdpWhoami(page: CanSend): Promise<Whoami> {
   // 注意：页内 r.json() 偶发拿不到值（returnByValue 序列化问题），取文本在 Node 侧解析
   const text = await cdpEval(page, `fetch('/api/whoami').then(r => r.text())`)
   return JSON.parse(String(text))
 }
 
-async function cdpLogin(page: CdpConnection, user: string): Promise<void> {
+async function cdpLogin(page: CanSend, user: string): Promise<void> {
   await cdpEval(
     page,
     `document.querySelector('input[name=user]') && ` +
@@ -88,7 +88,7 @@ async function cdpLogin(page: CdpConnection, user: string): Promise<void> {
   await poll(() => cdpEval(page, `location.pathname === '/app'`), 10000, 'kernel 跳转 /app')
 }
 
-async function cdpLocalStorage(page: CdpConnection, key: string): Promise<string> {
+async function cdpLocalStorage(page: CanSend, key: string): Promise<string> {
   return String(await cdpEval(page, `localStorage.getItem(${JSON.stringify(key)}) || ''`))
 }
 

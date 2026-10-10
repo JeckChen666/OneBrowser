@@ -7,7 +7,7 @@ import { randomId } from './e2e'
 import type { KernelLauncher } from './kernelLauncher'
 import type { EnvConfig } from '@shared/types'
 import type { Host, KernelRunningEnv, OpenOptions, RunningEnv } from './host'
-import { attachPage, CdpConnection, closeTab, newTab } from './cdp'
+import { attachPage, CdpConnection, closeTab, newTab } from './cdp'  // CdpConnection 用于临时标签页（不跨进程切换，页面级 ws 安全）
 import type { StructuredData } from './dataPlane'
 
 /** Electron Cookie 形状（快照内） ↔ CDP cookie 映射（docker 冒烟亦复用） */
@@ -68,16 +68,20 @@ export class ExternalKernelHost implements Host {
   async open(env: EnvConfig, opts: OpenOptions = {}): Promise<RunningEnv> {
     if (this.running.has(env.id)) throw new Error('环境已在运行中')
     const runToken = randomId()
-    const userDataDir = path.join(app.getPath('userData'), 'kernel-profiles', `${env.id}-${runToken}`)
+    // 无空格、浅层路径：容器内内核对深层/含空格 user-data-dir 存在 CDP 挂死问题（S3 排障）
+    const userDataDir = path.join(app.getPath('temp'), 'ob-kp', `${env.id}-${runToken}`)
     fs.mkdirSync(userDataDir, { recursive: true })
 
+    // 初始页直接为目标站点：规避「attach 后 Page.navigate + 代理」组合导致的渲染器挂起
+    // （进程切换 + 代理路径下 renderer 无响应；直接以 URL 启动等价于已验证的 new-tab 场景）
+    const startUrl = env.homepage && /^https?:/.test(env.homepage) ? env.homepage : 'about:blank'
     const args: string[] = [
       `--user-data-dir=${userDataDir}`,
       `--fingerprint=${env.seed}`,
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
-      'about:blank'
+      startUrl
     ]
     const fp = opts.fingerprint
     if (fp?.platform) args.push(`--fingerprint-platform=${fp.platform}`)
@@ -91,27 +95,58 @@ export class ExternalKernelHost implements Host {
     }
 
     let re: KernelRunningEnv | null = null
-    const launch = await this.launcher.launch(args, () => {
-      if (!re || this.running.get(env.id) === re) {
-        if (re) this.running.delete(env.id)
+    console.log(`[kernel] 启动环境 ${env.id}（launcher=${this.launcher.constructor.name}）`)
+    let connRef: import('./cdp').CdpConnection | null = null
+    // 退出通知可能在 re 赋值前到达（docker wait 早退等时序），挂 pending 标志在 open 完成后补做清理
+    let pendingExit = false
+    const handleExit = (): void => {
+      if (!re) {
+        pendingExit = true
+        return
+      }
+      if (this.running.get(env.id) === re) {
+        this.running.delete(env.id)
         try {
-          re?.page.close()
+          connRef?.close()
         } catch {
           /* ignore */
         }
         this.onClosed?.(env.id)
       }
-    })
+    }
+    const launch = await this.launcher.launch(args, handleExit)
     try {
-      const { conn } = await attachPage(launch.port)
-      await conn.send('Page.enable')
-      await conn.send('Network.enable')
+      const { session, conn } = await attachPage(launch.port)
+      connRef = conn
+      await session.send('Page.enable')
+      // 注意：不启用 Network 域——与指纹 platform flag 组合会毒化浏览器 Runtime（S3 排障）；
+      // 数据面走 Storage API，无需 Network 域
 
-      re = { kind: 'kernel', envId: env.id, runToken, launch, port: launch.port, page: conn, origins: new Set(opts.restore?.origins || []) }
+      // 代理认证：--proxy-server 不带凭据，经 CDP Fetch 域响应 407 挑战
+      if (env.proxy?.username) {
+        await session.send('Fetch.enable', { handleAuthRequests: true }).catch(() => undefined)
+        session.on('Fetch.authRequired', (p: any) => {
+          session
+            .send('Fetch.continueWithAuth', {
+              requestId: p.requestId,
+              authChallengeResponse: {
+                response: 'ProvideCredentials',
+                username: env.proxy!.username || '',
+                password: env.proxy!.password || ''
+              }
+            })
+            .catch(() => undefined)
+        })
+        session.on('Fetch.requestPaused', (p: any) => {
+          session.send('Fetch.continueRequest', { requestId: p.requestId }).catch(() => undefined)
+        })
+      }
+
+      re = { kind: 'kernel', envId: env.id, runToken, launch, port: launch.port, page: session, origins: new Set(opts.restore?.origins || []) }
       const cur = re
 
       // origin 跟踪（导航事件）
-      conn.on('Page.frameNavigated', (params: any) => {
+      session.on('Page.frameNavigated', (params: any) => {
         const url: string = params?.frame?.url || ''
         if (!/^https?:/.test(url)) return
         try {
@@ -122,15 +157,13 @@ export class ExternalKernelHost implements Host {
       })
 
       this.running.set(env.id, re)
+      if (pendingExit) handleExit() // launch 期间已收到退出通知
 
       // 注入登录态（cookie 直写；localStorage 用临时标签页逐 origin 注入）
       if (opts.restore) {
         await this.restoreData(re, opts.restore, launch.port)
       }
 
-      if (env.homepage && /^https?:/.test(env.homepage)) {
-        await conn.send('Page.navigate', { url: env.homepage })
-      }
       return re
     } catch (e) {
       await launch.stop().catch(() => undefined)
@@ -140,6 +173,7 @@ export class ExternalKernelHost implements Host {
 
   /** 数据注入：cookie + localStorage（临时 tab 执行，不打扰用户 tab） */
   private async restoreData(re: KernelRunningEnv, data: StructuredData, port: number): Promise<void> {
+    let lsCount = 0
     if (data.cookies?.length) {
       const payload = data.cookies.map(snapCookieToCdp)
       try {
@@ -156,6 +190,7 @@ export class ExternalKernelHost implements Host {
     for (const [origin, kv] of Object.entries(data.localStorage || {})) {
       const entries = Object.entries(kv || {})
       if (!entries.length) continue
+      lsCount += entries.length
       const tab = await newTab(port, origin + '/')
       try {
         const conn = new CdpConnection(tab.webSocketDebuggerUrl!)
@@ -163,9 +198,20 @@ export class ExternalKernelHost implements Host {
         const script =
           '(() => {' + entries.map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('') + '})()'
         await conn.send('Runtime.evaluate', { expression: script, awaitPromise: false })
+        // 等待 LevelDB 落盘后再关 tab，避免写入丢失
+        await new Promise((r) => setTimeout(r, 400))
         conn.close()
       } finally {
         await closeTab(port, tab.id)
+      }
+    }
+    if (lsCount > 0) {
+      console.log(`[kernel] localStorage 注入 ${lsCount} 项`)
+      // 主页面若已加载（startUrl 直载），刷新一次使其读到注入后的存储
+      try {
+        await re.page.send('Page.reload')
+      } catch {
+        /* ignore */
       }
     }
   }

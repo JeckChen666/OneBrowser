@@ -13,7 +13,8 @@
     "e2e": "electron-vite build && electron . --e2e",
     "e2e:run": "electron . --e2e",
     "e2e:interop": "electron-vite build && electron . --e2e-interop",
-    "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker"
+    "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker",
+    "e2e:fp": "electron-vite build && electron . --e2e-fp  # known-issue KI-1（docs/v0.2.0-s3-notes.md）"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

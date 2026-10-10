@@ -6,7 +6,7 @@ socat TCP-LISTEN:9223,fork,bind=0.0.0.0 TCP:127.0.0.1:9222 &
 sleep 1
 exec /usr/local/bin/kernel \
   --no-sandbox --disable-dev-shm-usage \
-  --use-angle=swiftshader-webgl \
+  --use-angle=swiftshader-webgl --enable-unsafe-swiftshader \
   --no-first-run --no-default-browser-check \
   --remote-debugging-port=9222 \
   "$@"

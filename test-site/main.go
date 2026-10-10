@@ -207,6 +207,11 @@ func (s *site) routes() *http.ServeMux {
 }
 
 func main() {
+	// 代理模式：PROXY_LISTEN=addr 时作为 HTTP 正向代理运行（测试用，与站点模式互斥）
+	if os.Getenv("PROXY_LISTEN") != "" {
+		proxyMain()
+		return
+	}
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
 		addr = ":18080"

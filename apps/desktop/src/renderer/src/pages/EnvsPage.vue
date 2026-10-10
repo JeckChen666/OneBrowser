@@ -117,11 +117,31 @@
             </el-select>
             <span class="hint" style="margin-left: 10px">种子决定整套指纹；跨设备同种子指纹一致</span>
           </el-form-item>
-          <el-form-item label="时区/语言覆盖">
-            <div class="proxy-row">
-              <el-input v-model="form.fpTimezone" placeholder="时区（留空=跟随种子）" style="flex: 1" />
-              <el-input v-model="form.fpLang" placeholder="语言（如 zh-CN）" style="flex: 1" />
-            </div>
+          <el-form-item label="时区">
+            <el-select v-model="form.fpTzMode" style="width: 130px">
+              <el-option value="seed" label="跟随种子" />
+              <el-option value="auto" label="按代理 IP" />
+              <el-option value="manual" label="手动" />
+            </el-select>
+            <el-input
+              v-if="form.fpTzMode === 'manual'"
+              v-model="form.fpTimezone"
+              placeholder="Asia/Shanghai"
+              style="width: 220px; margin-left: 8px"
+            />
+          </el-form-item>
+          <el-form-item label="语言">
+            <el-select v-model="form.fpLangMode" style="width: 130px">
+              <el-option value="seed" label="跟随种子" />
+              <el-option value="auto" label="按代理 IP" />
+              <el-option value="manual" label="手动" />
+            </el-select>
+            <el-input
+              v-if="form.fpLangMode === 'manual'"
+              v-model="form.fpLang"
+              placeholder="zh-CN"
+              style="width: 220px; margin-left: 8px"
+            />
           </el-form-item>
         </template>
         <el-form-item label="主页">
@@ -189,7 +209,9 @@ const form = reactive<{
   hosting: 'kernel' | 'builtin'
   homepage: string
   fpPlatform: string
+  fpTzMode: 'seed' | 'auto' | 'manual'
   fpTimezone: string
+  fpLangMode: 'seed' | 'auto' | 'manual'
   fpLang: string
 }>({
   name: '',
@@ -197,7 +219,9 @@ const form = reactive<{
   hosting: 'kernel',
   homepage: 'http://127.0.0.1:18080',
   fpPlatform: 'Windows',
+  fpTzMode: 'seed',
   fpTimezone: '',
+  fpLangMode: 'seed',
   fpLang: ''
 })
 const proxy = reactive<Required<Pick<ProxyConfig, 'scheme' | 'host' | 'port'>> & Partial<ProxyConfig>>({
@@ -257,8 +281,10 @@ async function create(): Promise<void> {
       fingerprint: form.hosting === 'kernel'
         ? {
             platform: form.fpPlatform || undefined,
-            ...(form.fpTimezone ? { timezone: form.fpTimezone } : {}),
-            ...(form.fpLang ? { lang: form.fpLang } : {})
+            timezoneMode: form.fpTzMode,
+            ...(form.fpTzMode === 'manual' && form.fpTimezone ? { timezone: form.fpTimezone } : {}),
+            langMode: form.fpLangMode,
+            ...(form.fpLangMode === 'manual' && form.fpLang ? { lang: form.fpLang } : {})
           }
         : undefined
     })

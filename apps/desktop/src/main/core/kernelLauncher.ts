@@ -53,20 +53,41 @@ export class DockerKernelLauncher implements KernelLauncher {
   async launch(args: string[], onExit: () => void): Promise<KernelLaunch> {
     const port = await freePort()
     const name = `ob-kernel-${randomId()}`
+    // execFileP 等待命令完成（-d 返回即容器已创建）——spawn 事件仅代表进程创建，
+    // 若不等完成，后续 docker wait 会在容器注册前执行而报 No such container
     await execFileP('docker', [
       'run', '-d', '--rm', '--name', name,
       '-p', `127.0.0.1:${port}:${this.containerPort}`,
       this.image,
       ...args
     ])
-    // docker wait 在容器退出时返回 → 触发 onExit
-    execFileP('docker', ['wait', name]).then(() => onExit(), () => onExit())
+    // docker wait 在容器退出时返回 → 触发 onExit；stop() 完成后亦主动触发（幂等，事件可能不可靠）
+    let exited = false
+    const fireExit = (): void => {
+      if (!exited) {
+        exited = true
+        onExit()
+      }
+    }
     await waitEndpoint(port, 45000)
     return {
       port,
       stop: async () => {
-        await browserClose(port).catch(() => undefined)
-        await execFileP('docker', ['rm', '-f', name]).catch(() => undefined)
+        console.log(`[launcher] stop 开始 name=${name}`)
+        await browserClose(port).catch((e) => console.log(`[launcher] browserClose 失败(忽略): ${e instanceof Error ? e.message : e}`))
+        console.log(`[launcher] browserClose 完成`)
+        await execFileP('docker', ['rm', '-f', name]).catch((e) => console.log(`[launcher] docker rm 失败(忽略): ${e instanceof Error ? e.message : e}`))
+        console.log(`[launcher] docker rm 完成`)
+        // 确认容器真正消失（最多 10s），随后主动触发 onExit
+        for (let i = 0; i < 20; i++) {
+          const alive = await execFileP('docker', ['ps', '-q', '--filter', `name=^${name}$`])
+            .then((r) => r.stdout.trim().length > 0)
+            .catch(() => false)
+          if (!alive) break
+          await new Promise((r) => setTimeout(r, 500))
+        }
+        console.log(`[launcher] 容器已消失，fireExit`)
+        fireExit()
       }
     }
   }

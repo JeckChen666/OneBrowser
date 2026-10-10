@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,6 +11,7 @@ import (
 
 	"onebrowser/server/internal/auth"
 	"onebrowser/server/internal/envs"
+	"onebrowser/server/internal/geo"
 	"onebrowser/server/internal/leases"
 	"onebrowser/server/internal/s3s3"
 	"onebrowser/server/internal/snapshots"
@@ -39,11 +41,17 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(middleware.Logger)
 
+	// 公开
 	r.Get("/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "onebrowser-server"})
 	})
-
-	// 公开
+	r.Get("/v1/geo", func(w http.ResponseWriter, r *http.Request) {
+		ip := r.URL.Query().Get("ip")
+		if ip == "" {
+			ip = clientIPFromRequest(r)
+		}
+		writeJSON(w, http.StatusOK, geo.Lookup(r.Context(), ip))
+	})
 	r.Get("/v1/auth/kdf-info", d.Auth.HandleKdfInfo)
 	r.Post("/v1/auth/register", d.Auth.HandleRegister)
 	r.Post("/v1/auth/login", d.Auth.HandleLogin)
@@ -66,6 +74,46 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/v1/envs/{envID}/base", d.Snaps.GetBase)
 	})
 	return r
+}
+
+func clientIPFromRequest(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		parts := splitTrim(fwd)
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func splitTrim(s string) []string {
+	var out []string
+	cur := ""
+	for _, c := range s {
+		if c == ',' {
+			out = append(out, trimSpace(cur))
+			cur = ""
+		} else {
+			cur += string(c)
+		}
+	}
+	out = append(out, trimSpace(cur))
+	return out
+}
+
+func trimSpace(s string) string {
+	start, end := 0, len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

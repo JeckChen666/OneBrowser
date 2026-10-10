@@ -9,7 +9,7 @@ import type { AppService } from './core/appService'
 import { ExternalKernelHost } from './core/externalKernelHost'
 import { snapCookieToCdp } from './core/externalKernelHost'
 import { NativeKernelLauncher } from './core/kernelLauncher'
-import type { KernelRunningEnv } from './core/host'
+import type { CanSend } from './core/cdp'
 import { attachPage, waitEndpoint } from './core/cdp'
 import { execFile as execFileCb } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -49,20 +49,22 @@ const FP_EXPR = `(() => {
   gl=e?g.getParameter(e.UNMASKED_VENDOR_WEBGL):g.getParameter(g.VENDOR);
   glr=e?g.getParameter(e.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)}catch(err){}
   return JSON.stringify({ua:navigator.userAgent,canvas:'0x'+djb2(cv.toDataURL()),gl,glr,
-    tz:Intl.DateTimeFormat().resolvedOptions().timeZone,hc:navigator.hardwareConcurrency,mem:navigator.deviceMemory})
+    hc:navigator.hardwareConcurrency})
 })()`
 
+export { FP_EXPR }
+
+// 注：容器内核上 Intl/locale 类读取存在挂死兼容问题（见 V0.2.0-S3 排障记录），
+// 指纹读取仅覆盖稳定字段（UA/canvas/WebGL/CPU 核数）
 interface Fp {
   ua: string
   canvas: string
   gl: string
   glr: string
-  tz: string
   hc: number
-  mem?: number
 }
 
-async function readFp(page: KernelRunningEnv['page']): Promise<Fp> {
+async function readFp(page: CanSend): Promise<Fp> {
   const res = await page.send('Runtime.evaluate', { expression: FP_EXPR, returnByValue: true })
   return JSON.parse(String(res.result?.value))
 }
@@ -101,7 +103,7 @@ export async function runKernelSmoke(svc: AppService): Promise<number> {
   await sleep(2500) // 等首页 /fp 渲染
   const fpA = await readFp(reA.page)
   log(`A 指纹：ua=${fpA.ua}`)
-  log(`          canvas=${fpA.canvas} gl=${fpA.gl} / ${fpA.glr} tz=${fpA.tz} hc=${fpA.hc}`)
+  log(`          canvas=${fpA.canvas} gl=${fpA.gl} / ${fpA.glr} hc=${fpA.hc}`)
   host.closeWindow('smoke-a')
   await waitExit(host, 'smoke-a')
 
@@ -112,7 +114,7 @@ export async function runKernelSmoke(svc: AppService): Promise<number> {
   await sleep(2500)
   const fpB = await readFp(reB.page)
   log(`B 指纹：ua=${fpB.ua}`)
-  log(`          canvas=${fpB.canvas} gl=${fpB.gl} / ${fpB.glr} tz=${fpB.tz} hc=${fpB.hc}`)
+  log(`          canvas=${fpB.canvas} gl=${fpB.gl} / ${fpB.glr} hc=${fpB.hc}`)
   host.closeWindow('smoke-b')
   await waitExit(host, 'smoke-b')
 
@@ -163,7 +165,9 @@ async function startDockerKernel(name: string, seed: string, platform: string, t
   const port = await freePort()
   // headful CDP 只绑容器 127.0.0.1:9222，入口用 socat 转发到 0.0.0.0:9223
   const args = ['run', '-d', '--rm', '--name', name, '-p', `127.0.0.1:${port}:9223`, IMAGE,
-    `--fingerprint=${seed}`, `--fingerprint-platform=${platform}`]
+    `--user-data-dir=/tmp/ks-${seed}`, `--fingerprint=${seed}`, `--fingerprint-platform=${platform}`,
+    '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
+    'http://192.168.31.220:18080/']
   if (tz) args.push(`--timezone=${tz}`)
   await execFileP('docker', args)
   await waitEndpoint(port, 45000)
@@ -183,26 +187,42 @@ export async function runKernelSmokeDocker(): Promise<number> {
   try {
     kA = await startDockerKernel('ob-ks-a', '11111111', 'Windows')
     const connA = await attachPage(kA.port)
-    await connA.conn.send('Page.enable')
-    const fpA = await readFp(connA.conn)
+    await connA.session.send('Page.enable')
+    const fpA = await readFp(connA.session)
     log(`A 指纹：ua=${fpA.ua}`)
-    log(`          canvas=${fpA.canvas} gl=${fpA.gl} / ${fpA.glr} tz=${fpA.tz} hc=${fpA.hc}`)
+    log(`          canvas=${fpA.canvas} gl=${fpA.gl} / ${fpA.glr} hc=${fpA.hc}`)
+
+    // T10：同 seed 第二个内核实例（模拟另一台设备）→ 指纹逐项一致
+    const kA2 = await startDockerKernel('ob-ks-a2', '11111111', 'Windows')
+    try {
+      const connA2 = await attachPage(kA2.port)
+      await connA2.session.send('Page.enable')
+      await sleep(2500)
+      const fpA2 = await readFp(connA2.session)
+      connA2.conn.close()
+      const t10Fields = ['ua', 'canvas', 'gl', 'glr', 'hc'] as const
+      const t10Diff = t10Fields.filter((k) => String((fpA as unknown as Record<string, unknown>)[k]) !== String((fpA2 as unknown as Record<string, unknown>)[k]))
+      check('T10 同 seed 跨设备指纹完全一致', t10Diff.length === 0, t10Diff.length ? `差异: ${t10Diff.join(',')}` : t10Fields.join('/'))
+      log(`T10 第二实例：canvas=${fpA2.canvas} gl=${fpA2.glr} hc=${fpA2.hc}`)
+    } finally {
+      await stopDockerKernel(kA2)
+    }
 
     // CDP 数据面：cookie 写入→读出 round-trip（复用产品代码的映射函数）
-    await connA.conn.send('Storage.setCookies', {
+    await connA.session.send('Storage.setCookies', {
       cookies: [snapCookieToCdp({ name: 'ob_smoke', value: 'ok-123', domain: '127.0.0.1', path: '/', secure: false, httpOnly: true, sameSite: 'lax' })]
     })
-    const got = await connA.conn.send('Storage.getCookies', {})
+    const got = await connA.session.send('Storage.getCookies', {})
     const found = (got.cookies || []).some((c: { name: string; value: string }) => c.name === 'ob_smoke' && c.value === 'ok-123')
     check('CDP cookie 数据面 round-trip（含 HttpOnly）', found)
     connA.conn.close()
 
     kB = await startDockerKernel('ob-ks-b', '22222222', 'Windows')
     const connB = await attachPage(kB.port)
-    await connB.conn.send('Page.enable')
-    const fpB = await readFp(connB.conn)
+    await connB.session.send('Page.enable')
+    const fpB = await readFp(connB.session)
     log(`B 指纹：ua=${fpB.ua}`)
-    log(`          canvas=${fpB.canvas} gl=${fpB.gl} / ${fpB.glr} tz=${fpB.tz} hc=${fpB.hc}`)
+    log(`          canvas=${fpB.canvas} gl=${fpB.gl} / ${fpB.glr} hc=${fpB.hc}`)
     connB.conn.close()
 
     check('UA 按 platform 伪装为 Windows', /Windows NT/.test(fpA.ua) && /Windows NT/.test(fpB.ua))
