@@ -1,26 +1,14 @@
-// 浏览器承载层：每个环境 = 独立内存 partition + 独立窗口。
+// 浏览器承载层（builtin）：每个环境 = 独立内存 partition + 独立窗口。
 // 非 persist partition：关闭即弃 —— 严格实现模式一「每次从基线分支」语义。
 import { BrowserWindow, session } from 'electron'
 import type { Session } from 'electron'
 import { randomId } from './e2e'
 import { captureCookies, captureLocalStorage, restoreCookies, restoreLocalStorage, originOf, type StructuredData } from './dataPlane'
 import type { EnvConfig } from '@shared/types'
+import type { BuiltinRunningEnv, Host, RunningEnv } from './host'
 
-export interface RunningEnv {
-  envId: string
-  runToken: string
-  ses: Session
-  win: BrowserWindow
-  origins: Set<string>
-}
-
-export interface OpenOptions {
-  restore?: StructuredData | null
-  hidden?: boolean
-}
-
-export class BrowserHost {
-  private running = new Map<string, RunningEnv>()
+export class BrowserHost implements Host {
+  private running = new Map<string, BuiltinRunningEnv>()
   onClosed: ((envId: string) => void) | null = null
 
   isRunning(envId: string): boolean {
@@ -28,11 +16,11 @@ export class BrowserHost {
   }
 
   /** 供菜单等遍历：[envId, RunningEnv] */
-  runningEntries(): IterableIterator<[string, RunningEnv]> {
+  runningEntries(): IterableIterator<[string, BuiltinRunningEnv]> {
     return this.running.entries()
   }
 
-  get(envId: string): RunningEnv | undefined {
+  get(envId: string): BuiltinRunningEnv | undefined {
     return this.running.get(envId)
   }
 
@@ -41,7 +29,7 @@ export class BrowserHost {
     return undefined
   }
 
-  async open(env: EnvConfig, opts: OpenOptions = {}): Promise<RunningEnv> {
+  async open(env: EnvConfig, opts: { restore?: StructuredData | null; hidden?: boolean } = {}): Promise<RunningEnv> {
     if (this.running.has(env.id)) throw new Error('环境已在运行中')
     const runToken = randomId()
     const ses = session.fromPartition(`env-${env.id}-${runToken}`)
@@ -70,7 +58,7 @@ export class BrowserHost {
         contextIsolation: true
       }
     })
-    const re: RunningEnv = { envId: env.id, runToken, ses, win, origins: new Set(opts.restore?.origins || []) }
+    const re: BuiltinRunningEnv = { kind: 'builtin', envId: env.id, runToken, ses, win, origins: new Set(opts.restore?.origins || []) }
 
     const track = (url: string): void => {
       const o = originOf(url)

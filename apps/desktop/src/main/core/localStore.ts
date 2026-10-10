@@ -7,6 +7,7 @@ import { randomId } from './e2e'
 interface LocalState {
   deviceId: string
   lastEmail?: string
+  kernel?: { localExe?: string }
 }
 
 export class LocalStore {
@@ -43,6 +44,15 @@ export class LocalStore {
   setLastEmail(email: string): void {
     this.state.lastEmail = email
     this.save()
+  }
+
+  setKernelLocalExe(exePath?: string): void {
+    this.state.kernel = { localExe: exePath }
+    this.save()
+  }
+
+  get kernelLocalExe(): string | undefined {
+    return this.state.kernel?.localExe
   }
 
   get snapshotCacheDir(): string {

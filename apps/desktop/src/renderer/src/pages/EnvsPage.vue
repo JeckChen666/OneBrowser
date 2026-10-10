@@ -17,6 +17,19 @@
       <div class="toolbar">
         <el-button type="primary" @click="showCreate = true">＋ 新建环境</el-button>
         <span class="hint">模式一：打开即从云端基线克隆，关闭即弃（点「保存为基线」更新基线）；模式二：同一时刻仅一台设备可用，他设备打开会接管。</span>
+        <div class="kernel-chip">
+          <template v-if="kernel">
+            <el-tag v-if="kernel.ready" size="small" type="success">内核 {{ kernel.version }}</el-tag>
+            <el-tag v-else size="small" type="info">内核未就绪</el-tag>
+            <el-button v-if="!kernel.ready" size="small" :loading="kernelBusy" @click="downloadKernel">下载</el-button>
+            <el-button size="small" text type="primary" @click="importKernel">本地导入</el-button>
+            <span v-if="kernel.progress?.status === 'downloading'" class="hint">
+              {{ kernel.progress.percent ?? 0 }}%
+            </span>
+            <span v-else-if="kernel.progress?.status === 'extracting'" class="hint">解压中…</span>
+            <span v-else-if="kernel.message && !kernel.ready" class="hint">{{ kernel.message }}</span>
+          </template>
+        </div>
       </div>
 
       <el-table :data="state.envs" v-loading="loading" empty-text="还没有环境，先新建一个">
@@ -24,6 +37,9 @@
           <template #default="{ row }">
             <div class="env-name">
               <b>{{ row.env.name }}</b>
+              <el-tag size="small" :type="row.env.hosting === 'kernel' ? 'primary' : 'info'" effect="plain">
+                {{ row.env.hosting === 'kernel' ? '指纹内核' : '内置' }}
+              </el-tag>
               <el-tag size="small" :type="row.env.mode === 'snapshot' ? 'success' : 'warning'">
                 {{ row.env.mode === 'snapshot' ? '模式一 · 快照' : '模式二 · 互斥' }}
               </el-tag>
@@ -86,6 +102,28 @@
             <el-radio value="exclusive">模式二 · 互斥接管</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="承载" required>
+          <el-radio-group v-model="form.hosting">
+            <el-radio value="kernel">指纹内核（推荐，需下载内核）</el-radio>
+            <el-radio value="builtin">内置轻量（Electron，无指纹）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <template v-if="form.hosting === 'kernel'">
+          <el-form-item label="指纹平台">
+            <el-select v-model="form.fpPlatform" style="width: 200px">
+              <el-option value="Windows" label="Windows" />
+              <el-option value="macOS" label="macOS" />
+              <el-option value="Linux" label="Linux" />
+            </el-select>
+            <span class="hint" style="margin-left: 10px">种子决定整套指纹；跨设备同种子指纹一致</span>
+          </el-form-item>
+          <el-form-item label="时区/语言覆盖">
+            <div class="proxy-row">
+              <el-input v-model="form.fpTimezone" placeholder="时区（留空=跟随种子）" style="flex: 1" />
+              <el-input v-model="form.fpLang" placeholder="语言（如 zh-CN）" style="flex: 1" />
+            </div>
+          </el-form-item>
+        </template>
         <el-form-item label="主页">
           <el-input v-model="form.homepage" placeholder="http://127.0.0.1:18080" />
         </el-form-item>
@@ -128,13 +166,16 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, inject, reactive, ref, type Ref } from 'vue'
 import { ElNotification } from 'element-plus'
-import type { AppState, EnvMode, EnvView, ProxyConfig } from '@shared/types'
+import type { AppState, EnvMode, EnvView, KernelStatus, ProxyConfig } from '@shared/types'
 import { ob } from '../api'
 
 const props = defineProps<{ state: AppState }>()
 const emit = defineEmits<{ refresh: [] }>()
+
+const kernel = inject<Ref<KernelStatus | null>>('kernelStatus', ref(null))
+const kernelBusy = ref(false)
 
 const loading = ref(false)
 const creating = ref(false)
@@ -142,10 +183,22 @@ const showCreate = ref(false)
 const showEdit = ref(false)
 const editing = ref<EnvView | null>(null)
 
-const form = reactive<{ name: string; mode: EnvMode; homepage: string }>({
+const form = reactive<{
+  name: string
+  mode: EnvMode
+  hosting: 'kernel' | 'builtin'
+  homepage: string
+  fpPlatform: string
+  fpTimezone: string
+  fpLang: string
+}>({
   name: '',
   mode: 'snapshot',
-  homepage: 'http://127.0.0.1:18080'
+  hosting: 'kernel',
+  homepage: 'http://127.0.0.1:18080',
+  fpPlatform: 'Windows',
+  fpTimezone: '',
+  fpLang: ''
 })
 const proxy = reactive<Required<Pick<ProxyConfig, 'scheme' | 'host' | 'port'>> & Partial<ProxyConfig>>({
   scheme: 'http',
@@ -195,11 +248,38 @@ async function create(): Promise<void> {
       }
     : undefined
   await guard(async () => {
-    await ob.createEnv({ name: form.name, mode: form.mode, homepage: form.homepage, proxy: p })
+    await ob.createEnv({
+      name: form.name,
+      mode: form.mode,
+      hosting: form.hosting,
+      homepage: form.homepage,
+      proxy: p,
+      fingerprint: form.hosting === 'kernel'
+        ? {
+            platform: form.fpPlatform || undefined,
+            ...(form.fpTimezone ? { timezone: form.fpTimezone } : {}),
+            ...(form.fpLang ? { lang: form.fpLang } : {})
+          }
+        : undefined
+    })
     showCreate.value = false
     form.name = ''
   })
   creating.value = false
+}
+
+async function downloadKernel(): Promise<void> {
+  kernelBusy.value = true
+  await guard(() => ob.kernelDownload())
+  kernelBusy.value = false
+}
+
+async function importKernel(): Promise<void> {
+  const p = await ob.pickKernelPath()
+  if (!p) return
+  kernelBusy.value = true
+  await guard(() => ob.kernelSetLocal(p))
+  kernelBusy.value = false
 }
 
 function edit(row: EnvView): void {
@@ -235,6 +315,7 @@ async function del(id: string): Promise<void> {
 function phaseText(p: string): string {
   const map: Record<string, string> = {
     opening: '打开中…',
+    'downloading-kernel': '准备指纹内核…',
     acquiring: '获取租约…',
     'waiting-evict': '等待对方下线…',
     saving: '上传快照…',
@@ -292,6 +373,12 @@ function formatTime(iso?: string): string {
   display: flex;
   gap: 14px;
   align-items: center;
+}
+.kernel-chip {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .hint {
   font-size: 12px;

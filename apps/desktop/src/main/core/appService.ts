@@ -3,7 +3,10 @@ import os from 'node:os'
 import { CloudClient, ApiError } from './cloudClient'
 import { LeaseAgent } from './leaseAgent'
 import { BrowserHost } from './browserHost'
+import { ExternalKernelHost } from './externalKernelHost'
+import { KernelManager } from './kernelManager'
 import { LocalStore } from './localStore'
+import type { Host, RunningEnv } from './host'
 import {
   DEFAULT_KDF,
   deriveAuthKey,
@@ -23,6 +26,7 @@ import type {
   EnvConfig,
   EnvPhase,
   EnvView,
+  KernelStatus,
   MainEvent,
   ProxyConfig
 } from '@shared/types'
@@ -35,7 +39,11 @@ interface PhaseEntry {
 export class AppService {
   readonly cloud: CloudClient
   readonly agent: LeaseAgent
+  /** builtin 承载（Electron 内存 partition，轻量模式） */
   readonly host = new BrowserHost()
+  /** kernel 承载（外挂指纹内核） */
+  readonly kernelHost: ExternalKernelHost
+  readonly kernelManager: KernelManager
   readonly store = new LocalStore()
 
   private dek: Uint8Array | null = null
@@ -56,17 +64,65 @@ export class AppService {
       onLost: (envId) => {
         this.setPhase(envId, 'idle', '租约已丢失（心跳超时）')
         this.host.closeWindow(envId)
+        this.kernelHost.closeWindow(envId)
         this.notify('warning', '环境租约已丢失，窗口已关闭')
       },
       onEnvUpdated: () => this.refreshEnvs().catch(() => {}),
       onReleased: () => {}
     })
-    this.host.onClosed = (envId) => {
-      if ((this.phases.get(envId)?.phase || 'idle') !== 'evicting') {
-        this.setPhase(envId, 'idle')
-        this.refreshEnvs().catch(() => {})
+    this.kernelManager = new KernelManager(
+      () => this.store.kernelLocalExe,
+      (p) => this.emit({ type: 'kernel', status: this.kernelStatus(p) })
+    )
+    this.kernelHost = new ExternalKernelHost(async () => {
+      const info = await this.kernelManager.ensureReady()
+      if (!info.exePath) throw new Error('内核不可用')
+      return info.exePath
+    })
+    const wireClosed = (h: { onClosed: ((envId: string) => void) | null }): void => {
+      h.onClosed = (envId) => {
+        if ((this.phases.get(envId)?.phase || 'idle') !== 'evicting') {
+          this.setPhase(envId, 'idle')
+          this.refreshEnvs().catch(() => {})
+        }
       }
     }
+    wireClosed(this.host)
+    wireClosed(this.kernelHost)
+  }
+
+  /** 环境对应的承载 */
+  private hostFor(env: Pick<EnvConfig, 'hosting'>): Host {
+    return env.hosting === 'kernel' ? this.kernelHost : this.host
+  }
+
+  /** 任一承载运行中 */
+  private isEnvRunning(envId: string): boolean {
+    return this.host.isRunning(envId) || this.kernelHost.isRunning(envId)
+  }
+
+  // ---------- 内核 ----------
+
+  kernelStatus(progress?: { status: string; percent?: number; message?: string }): KernelStatus {
+    const s = this.kernelManager.status()
+    return { ...s, downloading: this.kernelManager.status().ready ? false : undefined, progress }
+  }
+
+  async downloadKernel(): Promise<KernelStatus> {
+    const info = await this.kernelManager.downloadLatest()
+    this.emit({ type: 'kernel', status: this.kernelStatus() })
+    this.notify('success', `指纹内核就绪（${info.version}）`)
+    return this.kernelStatus()
+  }
+
+  async setKernelLocalPath(exePath: string | undefined): Promise<KernelStatus> {
+    if (exePath) {
+      const ok = await this.kernelManager.validateLocalExe(exePath)
+      if (!ok) throw new Error('该文件无法作为内核运行（--version 校验失败）')
+    }
+    this.store.setKernelLocalExe(exePath)
+    this.emit({ type: 'kernel', status: this.kernelStatus() })
+    return this.kernelStatus()
   }
 
   // ---------- 状态 ----------
@@ -81,7 +137,7 @@ export class AppService {
       const base = this.baseMetas.get(env.id)
       return {
         env,
-        phase: this.host.isRunning(env.id) && p.phase === 'idle' ? 'running' : p.phase,
+        phase: this.isEnvRunning(env.id) && p.phase === 'idle' ? 'running' : p.phase,
         message: p.message,
         hasBase: !!base,
         baseCreatedAt: base?.createdAt,
@@ -152,6 +208,7 @@ export class AppService {
   async logout(): Promise<void> {
     this.agent.stopAll()
     this.host.closeAll()
+    this.kernelHost.closeAll()
     try {
       await this.cloud.logout()
     } catch {
@@ -176,13 +233,16 @@ export class AppService {
     const { envs } = await this.cloud.listEnvs()
     const next = new Map<string, EnvConfig>()
     for (const row of envs) {
-      let cfg: { homepage?: string; seed?: string; proxy?: ProxyConfig } = {}
+      let cfg: {
+        hosting?: EnvConfig['hosting']
+        homepage?: string
+        seed?: string
+        proxy?: ProxyConfig
+        fingerprint?: EnvConfig['fingerprint']
+        kernelVersion?: string
+      } = {}
       try {
-        cfg = await openConfig<{ homepage?: string; seed?: string; proxy?: ProxyConfig }>(
-          this.dek!,
-          row.id,
-          row.configEnc
-        )
+        cfg = await openConfig<typeof cfg>(this.dek!, row.id, row.configEnc)
       } catch {
         // 配置解密失败（如密钥轮换后旧数据）——降级为默认配置
       }
@@ -190,9 +250,12 @@ export class AppService {
         id: row.id,
         name: row.name,
         mode: row.mode,
+        hosting: cfg.hosting === 'kernel' ? 'kernel' : 'builtin', // 旧环境缺省 builtin，保持兼容
         homepage: cfg.homepage || '',
         seed: cfg.seed || randomId(),
         proxy: cfg.proxy,
+        fingerprint: cfg.fingerprint,
+        kernelVersion: cfg.kernelVersion,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
       })
@@ -208,23 +271,32 @@ export class AppService {
   async createEnv(input: CreateEnvInput): Promise<void> {
     if (!this.logged_in) throw new Error('未登录')
     const id = randomId()
+    const hosting = input.hosting === 'builtin' ? 'builtin' : 'kernel'
     const configEnc = await sealConfig(this.dek!, id, {
+      hosting,
       homepage: input.homepage,
       seed: randomId(),
-      proxy: input.proxy
+      proxy: input.proxy,
+      fingerprint: input.fingerprint,
     })
     await this.cloud.createEnv({ id, name: input.name, mode: input.mode, configEnc })
     await this.refreshEnvs()
-    this.notify('success', `环境「${input.name}」已创建`)
+    this.notify('success', `环境「${input.name}」已创建（${hosting === 'kernel' ? '指纹内核' : '内置轻量'}）`)
   }
 
-  async updateEnv(id: string, patch: { name?: string; homepage?: string; proxy?: ProxyConfig }): Promise<void> {
+  async updateEnv(
+    id: string,
+    patch: { name?: string; homepage?: string; proxy?: ProxyConfig; fingerprint?: EnvConfig['fingerprint'] }
+  ): Promise<void> {
     const cur = this.envs.get(id)
     if (!cur) throw new Error('环境不存在')
     const configEnc = await sealConfig(this.dek!, id, {
+      hosting: cur.hosting,
       homepage: patch.homepage !== undefined ? patch.homepage : cur.homepage,
       seed: cur.seed,
-      proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy
+      proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy,
+      fingerprint: patch.fingerprint !== undefined ? patch.fingerprint : cur.fingerprint,
+      kernelVersion: cur.kernelVersion
     })
     await this.cloud.updateEnv(id, {
       name: patch.name !== undefined ? patch.name : cur.name,
@@ -234,7 +306,7 @@ export class AppService {
   }
 
   async deleteEnv(id: string): Promise<void> {
-    if (this.host.isRunning(id)) throw new Error('环境运行中，请先关闭')
+    if (this.isEnvRunning(id)) throw new Error('环境运行中，请先关闭')
     await this.cloud.deleteEnv(id)
     this.envs.delete(id)
     this.phases.delete(id)
@@ -246,16 +318,32 @@ export class AppService {
   async openEnv(envId: string, hidden = false): Promise<void> {
     const env = this.envs.get(envId)
     if (!env) throw new Error('环境不存在')
-    if (this.host.isRunning(envId)) throw new Error('环境已打开')
+    if (this.isEnvRunning(envId)) throw new Error('环境已打开')
+    const host = this.hostFor(env)
+
+    // kernel 承载：先确保内核就绪（可能触发首次下载）
+    if (env.hosting === 'kernel' && !this.kernelManager.status().ready) {
+      this.setPhase(envId, 'downloading-kernel', '准备指纹内核（首次需下载，约 200MB）…')
+      await this.kernelManager.ensureReady()
+      this.emit({ type: 'kernel', status: this.kernelStatus() })
+    }
 
     if (env.mode === 'snapshot') {
       this.setPhase(envId, 'opening')
       const restore = await this.downloadBase(envId)
-      await this.host.open(env, { restore, hidden })
+      await host.open(env, {
+        restore,
+        hidden,
+        fingerprint: { seed: env.seed, ...env.fingerprint }
+      })
       this.setPhase(
         envId,
         'running',
-        restore ? '已从云端基线克隆' : '首次打开：请登录后点击「保存为基线」'
+        restore
+          ? `已从云端基线克隆${env.hosting === 'kernel' ? '（指纹内核）' : ''}`
+          : env.hosting === 'kernel'
+            ? '首次打开：请登录后点击「保存为基线」'
+            : '首次打开：请登录后点击「保存为基线」'
       )
       return
     }
@@ -271,7 +359,11 @@ export class AppService {
     const restore = outcome.snapshotId
       ? await this.downloadSnapshot(envId, outcome.snapshotId)
       : await this.downloadBase(envId)
-    await this.host.open(env, { restore, hidden })
+    await host.open(env, {
+      restore,
+      hidden,
+      fingerprint: { seed: env.seed, ...env.fingerprint }
+    })
     this.agent.startHeartbeat(envId)
     this.setPhase(envId, 'running', outcome.stale ? '已接管（旧基线：对方设备未及时上传）' : '已接管')
     this.notify('success', `已打开互斥环境「${env.name}」`)
@@ -279,7 +371,8 @@ export class AppService {
 
   async closeEnv(envId: string): Promise<void> {
     const env = this.envs.get(envId)
-    if (!env || !this.host.isRunning(envId)) return
+    if (!env || !this.isEnvRunning(envId)) return
+    const host = this.hostFor(env)
     if (env.mode === 'exclusive' && this.logged_in) {
       this.setPhase(envId, 'saving', '保存最新状态到云端…')
       let snapId: string | undefined
@@ -294,12 +387,12 @@ export class AppService {
     } else {
       this.setPhase(envId, 'closing')
     }
-    this.host.closeWindow(envId) // onClosed → idle + refresh
+    host.closeWindow(envId) // onClosed → idle + refresh
   }
 
   /** 保存为基线（模式一主入口；模式二也可手动触发） */
   async saveBase(envId: string): Promise<void> {
-    if (!this.host.isRunning(envId)) throw new Error('环境未运行')
+    if (!this.isEnvRunning(envId)) throw new Error('环境未运行')
     this.setPhase(envId, 'saving', '抓取并上传基线快照…')
     const snapId = await this.uploadSnapshot(envId)
     this.setPhase(envId, 'running', `基线已更新（${snapId.slice(0, 8)}…）`)
@@ -309,12 +402,13 @@ export class AppService {
 
   /** 被驱逐：抓取→上传→释放→关窗（服务端 lease.evict 指令） */
   private async handleEvicted(envId: string): Promise<void> {
-    if (!this.host.isRunning(envId)) {
+    const env = this.envs.get(envId)
+    const host = env ? this.hostFor(env) : this.host
+    if (!this.isEnvRunning(envId)) {
       this.agent.stopHeartbeat(envId)
       this.agent.release(envId)
       return
     }
-    const env = this.envs.get(envId)
     this.setPhase(envId, 'evicting', '被请求接管：保存并下线…')
     let snapId: string | undefined
     try {
@@ -327,7 +421,7 @@ export class AppService {
     this.agent.stopHeartbeat(envId)
     this.agent.release(envId, snapId)
     this.setPhase(envId, 'closing')
-    this.host.closeWindow(envId)
+    host.closeWindow(envId)
     this.notify('warning', `环境「${env?.name || envId}」已被其他设备接管，最新状态已保存上云`)
     this.refreshEnvs().catch(() => {})
   }
@@ -367,9 +461,10 @@ export class AppService {
   /** 抓取运行中环境 → 加密 → 上传 → commit，返回 snapshotId */
   async uploadSnapshot(envId: string): Promise<string> {
     if (!this.logged_in) throw new Error('未登录')
-    const data = await this.host.capture(envId)
     const env = this.envs.get(envId)
     if (!env) throw new Error('环境不存在')
+    const host = this.hostFor(env)
+    const data = await host.capture(envId)
     const basedOn = this.baseMetas.get(envId)?.snapshotId || null
     const up = await this.cloud.createUpload(envId, this.store.deviceId)
     const sealed = await seal({

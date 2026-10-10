@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppState, CreateEnvInput, MainEvent, ProxyConfig } from '@shared/types'
+import type { AppState, CreateEnvInput, KernelStatus, MainEvent, ProxyConfig } from '@shared/types'
 
 interface IpcResult<T> {
   ok: boolean
@@ -27,6 +27,10 @@ const api = {
   openEnv: (id: string): Promise<void> => invoke('ob:openEnv', id),
   closeEnv: (id: string): Promise<void> => invoke('ob:closeEnv', id),
   saveBase: (id: string): Promise<void> => invoke('ob:saveBase', id),
+  kernelStatus: (): Promise<KernelStatus> => invoke('ob:kernelStatus'),
+  kernelDownload: (): Promise<KernelStatus> => invoke('ob:kernelDownload'),
+  kernelSetLocal: (p: string | undefined): Promise<KernelStatus> => invoke('ob:kernelSetLocal', p),
+  pickKernelPath: (): Promise<string | null> => invoke('ob:pickKernelPath'),
   onEvent: (cb: (e: MainEvent) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: MainEvent): void => cb(ev)
     ipcRenderer.on('ob:event', listener)

@@ -4,9 +4,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, provide, ref } from 'vue'
 import { ElNotification } from 'element-plus'
-import type { AppState, MainEvent } from '@shared/types'
+import type { AppState, KernelStatus, MainEvent } from '@shared/types'
 import { ob } from './api'
 import LoginPage from './pages/LoginPage.vue'
 import EnvsPage from './pages/EnvsPage.vue'
@@ -15,6 +15,10 @@ const state = ref<AppState | null>(null)
 const lastEmail = ref(localStorage.getItem('ob:lastEmail') || '')
 
 let off: (() => void) | null = null
+const kernelStatus = ref<import('@shared/types').KernelStatus | null>(null)
+const kernelBus = { listeners: new Set<(s: import('@shared/types').KernelStatus) => void>(), emit(s: import('@shared/types').KernelStatus) { for (const l of this.listeners) l(s) } }
+provide('kernelStatus', kernelStatus)
+provide('kernelBus', kernelBus)
 
 async function refresh(): Promise<void> {
   try {
@@ -31,10 +35,16 @@ async function refresh(): Promise<void> {
 onMounted(() => {
   off = ob.onEvent((e: MainEvent) => {
     if (e.type === 'state') state.value = e.state
-    else if (e.type === 'notify')
+    else if (e.type === 'kernel') {
+      kernelStatus.value = e.status
+      kernelBus.emit(e.status)
+    } else if (e.type === 'notify')
       (ElNotification as unknown as Record<string, (o: { title: string; message: string }) => void>)[
         e.level === 'success' ? 'success' : e.level === 'warning' ? 'warning' : 'error'
       ]({ title: 'OneBrowser', message: e.message })
+  })
+  ob.kernelStatus().then((s) => {
+    kernelStatus.value = s
   })
   refresh()
 })

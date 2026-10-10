@@ -15,3 +15,5 @@ apps/desktop/dist/
 .minio-data/
 .v2c/
 .idea/
+scripts/kernel-docker/kernel/
+scripts/kernel-docker/*.tar.xz

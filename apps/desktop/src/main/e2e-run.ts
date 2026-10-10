@@ -88,7 +88,7 @@ export async function runE2E(): Promise<number> {
 
   // ---------- T1 模式一 ----------
   log('—— T1 模式一（快照分支）——')
-  await svc.createEnv({ name: 'T1-快照环境', mode: 'snapshot', homepage: SITE })
+  await svc.createEnv({ name: 'T1-快照环境', mode: 'snapshot', hosting: 'builtin', homepage: SITE })
   const env1 = svc.getState().envs.find((v: import('@shared/types').EnvView) => v.env.name === 'T1-快照环境')!.env.id
 
   await svc.openEnv(env1, true) // hidden 窗口
@@ -133,7 +133,7 @@ export async function runE2E(): Promise<number> {
 
   // ---------- T3 模式二（互斥接管，设备 B 为独立客户端） ----------
   log('—— T3 模式二（互斥接管）——')
-  await svc.createEnv({ name: 'T3-互斥环境', mode: 'exclusive', homepage: SITE })
+  await svc.createEnv({ name: 'T3-互斥环境', mode: 'exclusive', hosting: 'builtin', homepage: SITE })
   const env2 = svc.getState().envs.find((v: import('@shared/types').EnvView) => v.env.name === 'T3-互斥环境')!.env.id
 
   // 设备 A（本进程主会话）打开并登录

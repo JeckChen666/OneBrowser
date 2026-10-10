@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AppService } from './core/appService'
@@ -56,6 +56,17 @@ function registerIPC(): void {
   handle('ob:openEnv', (id: string) => svc.openEnv(id))
   handle('ob:closeEnv', (id: string) => svc.closeEnv(id))
   handle('ob:saveBase', (id: string) => svc.saveBase(id))
+  handle('ob:kernelStatus', () => svc.kernelStatus())
+  handle('ob:kernelDownload', () => svc.downloadKernel())
+  handle('ob:kernelSetLocal', (p: string | undefined) => svc.setKernelLocalPath(p))
+  ipcMain.handle('ob:pickKernelPath', async () => {
+    const r = await dialog.showOpenDialog({
+      title: '选择内核可执行文件',
+      properties: ['openFile'],
+      filters: [{ name: '可执行文件', extensions: ['exe', 'app', ''] }]
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
 }
 
 function registerMenu(): void {
@@ -102,6 +113,18 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--e2e')) {
     const { runE2E } = await import('./e2e-run')
     const code = await runE2E()
+    app.exit(code)
+    return
+  }
+
+  if (process.argv.includes('--kernel-smoke')) {
+    const { runKernelSmoke, runKernelSmokeDocker } = await import('./kernel-smoke')
+    const svc0 = new AppService(serverUrl, (e) => {
+      if (e.type === 'kernel' && e.status.progress) console.log(`[kernel] ${e.status.progress.status} ${e.status.progress.percent ?? ''}% ${e.status.progress.message || ''}`)
+    })
+    const code = process.argv.includes('--docker')
+      ? await runKernelSmokeDocker()
+      : await runKernelSmoke(svc0)
     app.exit(code)
     return
   }
