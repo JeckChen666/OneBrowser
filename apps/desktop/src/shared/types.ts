@@ -35,6 +35,9 @@ export interface EnvConfig {
   proxy?: ProxyConfig
   fingerprint?: FingerprintConfig
   kernelVersion?: string
+  /** 会话健康检查（可选）：打开快照环境恢复登录态后，按此探测基线是否仍有效；
+   * 响应体不含 loggedInMarker 时提示「基线失效，请重新登录并更新基线」 */
+  sessionCheck?: { urlPath: string; loggedInMarker: string }
   createdAt: string
   updatedAt: string
 }
@@ -102,6 +105,7 @@ export interface CreateEnvInput {
   homepage: string
   proxy?: ProxyConfig
   fingerprint?: FingerprintConfig
+  sessionCheck?: { urlPath: string; loggedInMarker: string }
   seed?: string // 测试用：指定种子（缺省随机）
 }
 

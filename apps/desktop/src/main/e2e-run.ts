@@ -2,6 +2,7 @@
 //   T1 模式一：A 登录→基线上云→B 克隆免登录（cookie+localStorage）
 //   T2 分支语义：B 分支内退出登录不影响云端基线
 //   T3 模式二：设备 B 请求接管 → A 被驱逐（自动上传+关窗）→ B 恢复最新会话
+//   T6R 会话过期：站点会话失效后打开环境 → 提示「基线失效，请重新登录并更新基线」
 // 运行前置：make infra && server(:8787) && test-site(:18080)；执行 pnpm e2e
 import { BrowserWindow, session } from 'electron'
 import { AppService } from './core/appService'
@@ -75,8 +76,12 @@ async function waitClosed(svc: AppService, envId: string): Promise<void> {
 export async function runE2E(): Promise<number> {
   const started = Date.now()
   log(`服务端=${SERVER} 测试站=${SITE}`)
+  const notifications: { level: string; message: string }[] = []
   const emit = (e: import('@shared/types').MainEvent): void => {
-    if (e.type === 'notify') log(`  [通知:${e.level}] ${e.message}`)
+    if (e.type === 'notify') {
+      log(`  [通知:${e.level}] ${e.message}`)
+      notifications.push({ level: e.level, message: e.message })
+    }
   }
   const svc = new AppService(SERVER, emit)
 
@@ -128,6 +133,23 @@ export async function runE2E(): Promise<number> {
     'T2.3 HttpOnly cookie 从基线恢复（值与基线一致）',
     sidRestored.length > 0 && sidRestored[0].value === sidBase
   )
+  await svc.closeEnv(env1)
+  await waitClosed(svc, env1)
+
+  // ---------- T6R 会话过期提示 ----------
+  log('—— T6R 会话过期（基线失效提示）——')
+  await svc.updateEnv(env1, {
+    sessionCheck: { urlPath: '/api/whoami', loggedInMarker: '"loggedIn":true' }
+  })
+  await fetch(SITE + '/api/expire', { method: 'POST' }) // 站点侧使全部会话过期
+  notifications.length = 0
+  await svc.openEnv(env1, true)
+  const warned = await poll(
+    () => Promise.resolve(notifications.some((n) => n.level === 'warning' && n.message.includes('基线失效'))),
+    8000,
+    'T6R 基线失效提示'
+  )
+  check('T6R 会话过期 → 提示「基线失效，请重新登录并更新基线」', warned)
   await svc.closeEnv(env1)
   await waitClosed(svc, env1)
 

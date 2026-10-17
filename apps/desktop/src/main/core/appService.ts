@@ -316,6 +316,7 @@ export class AppService {
         proxy?: ProxyConfig
         fingerprint?: EnvConfig['fingerprint']
         kernelVersion?: string
+        sessionCheck?: EnvConfig['sessionCheck']
       } = {}
       try {
         cfg = await openConfig<typeof cfg>(this.dek!, row.id, row.configEnc)
@@ -339,6 +340,7 @@ export class AppService {
         proxy: cfg.proxy,
         fingerprint: cfg.fingerprint,
         kernelVersion: cfg.kernelVersion,
+        sessionCheck: cfg.sessionCheck,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
       })
@@ -374,6 +376,7 @@ export class AppService {
       seed: input.seed || randomSeed(),
       proxy: input.proxy,
       fingerprint: input.fingerprint,
+      sessionCheck: input.sessionCheck
     })
     await this.cloud.createEnv({ id, name: input.name, mode: input.mode, configEnc })
     await this.refreshEnvs()
@@ -388,6 +391,7 @@ export class AppService {
       proxy?: ProxyConfig
       fingerprint?: EnvConfig['fingerprint']
       hosting?: EnvConfig['hosting']
+      sessionCheck?: EnvConfig['sessionCheck']
     }
   ): Promise<void> {
     const cur = this.envs.get(id)
@@ -398,6 +402,7 @@ export class AppService {
       seed: cur.seed,
       proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy,
       fingerprint: patch.fingerprint !== undefined ? patch.fingerprint : cur.fingerprint,
+      sessionCheck: patch.sessionCheck !== undefined ? patch.sessionCheck : cur.sessionCheck,
       kernelVersion: cur.kernelVersion
     })
     await this.cloud.updateEnv(id, {
@@ -446,6 +451,7 @@ export class AppService {
             ? '首次打开：请登录后点击「保存为基线」'
             : '首次打开：请登录后点击「保存为基线」'
       )
+      if (restore && env.sessionCheck) this.probeSession(env).catch(() => undefined)
       return
     }
 
@@ -464,6 +470,43 @@ export class AppService {
     this.agent.startHeartbeat(envId)
     this.setPhase(envId, 'running', outcome.stale ? '已接管（旧基线：对方设备未及时上传）' : '已接管')
     this.notify('success', `已打开互斥环境「${env.name}」`)
+  }
+
+  /** 会话健康检查：恢复基线后探测登录态是否仍有效（按 env.sessionCheck 配置）。
+   * 在环境自己的会话上下文里发请求（builtin=页面 fetch 带 cookie；kernel=CDP
+   * 页面内 fetch），响应不含 loggedInMarker 判定基线失效并提示重新登录。
+   * 探测失败（网络/页面未就绪）静默忽略——不能因探测误报打扰使用。 */
+  private async probeSession(env: EnvConfig): Promise<void> {
+    const sc = env.sessionCheck
+    if (!sc || !this.isEnvRunning(env.id)) return
+    let body = ''
+    try {
+      const re = this.host.get(env.id)
+      if (re && re.kind === 'builtin') {
+        body = String(
+          await re.win.webContents.executeJavaScript(
+            `fetch(${JSON.stringify(sc.urlPath)}, { credentials: 'include' }).then(r => r.text()).catch(() => '')`
+          )
+        )
+      } else {
+        const k = this.kernelHost.get(env.id)
+        if (!k) return
+        const r = await k.page.send('Runtime.evaluate', {
+          expression: `fetch(${JSON.stringify(sc.urlPath)}).then(r => r.text()).catch(() => '')`,
+          awaitPromise: true,
+          returnByValue: true
+        })
+        body = String(r.result?.value ?? '')
+      }
+    } catch {
+      return
+    }
+    if (!body.includes(sc.loggedInMarker)) {
+      console.log(`[probeSession] 基线失效 ${env.id}（marker 不在响应中）`)
+      this.notify('warning', `「${env.name}」基线失效，请重新登录并更新基线`)
+      this.setPhase(env.id, 'running', '基线失效：请重新登录后点击「保存为基线」')
+      this.push()
+    }
   }
 
   async closeEnv(envId: string): Promise<void> {
