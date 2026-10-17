@@ -29,7 +29,7 @@
 
 ## 下一步（按优先级，V0.4 执行）
 
-1. **V0.4-A 内核补丁 PoC 收尾**：源码 tarball 已在 `/Users/macos/Code/ob-kernel-build/build/download_cache` 后台下载中（约 1.5G+，完成后跑 `scripts/kernel-build/bootstrap.sh` 的步骤 2–4 → `build-mac.sh`，8 核 6–12h）→ 产物跑 `os-crypt-roaming-poc` 验证（同 `--os-crypt-key` 双 profile 拷贝互解）→ 产品侧接线（DEK→HKDF 派生密钥注入 launcher）。
+1. **V0.4-A 内核构建接力**（现场与坑备忘见 `scripts/kernel-build/README.md`）：bootstrap 全链路已过（补丁 apply 实测 ✓）、clang ✓、gn 自举 ✓、产品侧 DEK→os-crypt 接线 ✓（flag 实参已验证）；**rust 工具链构建后台进行中**（/tmp/ob-rust.log，2–4h）→ 完成后 `gn gen` + `autoninja … chrome`（6–12h）→ `os-crypt-roaming-poc` 验证。
 2. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 3. **V0.5 规划**：增量快照、自动更新（electron-updater）、团队协作。
 

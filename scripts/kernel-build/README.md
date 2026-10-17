@@ -23,8 +23,36 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
       ungoogled 补丁集不触及这三个文件（grep 全 patches/ 确认），apply 无冲突
 - [x] KI-1 根因源码级确认：`std::stoull(非法 seed)` 抛异常（005 号补丁），
       支持上游 issue 与客户端校验的双防线
-- [ ] 源码树 apply 实测（bootstrap 步骤 4 的 patch --dry-run）
+- [x] 源码树 apply 实测：126 个上游补丁 + 域名替换后 OneBrowser 补丁三文件
+      干净应用（2026-10-18，`/Users/macos/Code/ob-kernel-build/build/src`）
+- [x] 产品侧接线：DEK→HKDF('os-crypt:<envId>')→16B hex 恒定注入内核 flag，
+      旧内核忽略未知 switch（e2e:l2 7/7），容器实参捕获确认
 - [ ] mac 构建产物 + os-crypt-roaming PoC 通过（双 profile 拷贝互解）
+      ——构建进行中/待续：`ob-kernel-build` 目录，见下「构建现场」
+
+## 构建现场（2026-10-18 起，进度）
+
+工作目录 `/Users/macos/Code/ob-kernel-build/`：`fp-chromium`（148 补丁仓库）、
+`build/src`（126 上游补丁 + OneBrowser 补丁全部应用，7.5GB）、`depot_tools`、
+`out/OneBrowser/{args.gn, gn}`（gn 已自举编译）。
+
+**已过步骤**：源码下载（lite tar.xz 1.5GB，哈希校验）→ unpack/prune/patches/domsub →
+OneBrowser 补丁三文件干净应用 → clang 预编译包（316MB，注意：domsub 会替换
+update.py 下载域，需先还原 `tools/` 下的假域再下载）→ gn 自举 → rust 工具链
+构建启动（`build_rust.py --entire-toolchain`，148 的 Chromium 硬依赖 Rust 且无
+预编译成品，2–4h，日志 /tmp/ob-rust.log）。
+
+**接力点**（rust 完成后）：
+```bash
+cd /Users/macos/Code/ob-kernel-build/build/src
+./buildtools/mac/gn gen out/OneBrowser        # 若报缺件对照 DEPS hooks 补
+autoninja -C out/OneBrowser chrome            # 8 核 6–12h
+```
+产物用于：1) `os-crypt-roaming-poc`（同 `--os-crypt-key` 双 profile 拷贝互解）；
+2) kernelManager 本地内核路径跑全套 kernel e2e；3) arm64 包（--args target_cpu="arm64"）。
+
+**坑备忘**：gclient runhooks 要求 git 仓库（tarball 不行，hook 需手动跑）；
+`.gclient` 的 solution name 必须匹配实际相对路径（`build/src`）。
 
 ## 备注
 
