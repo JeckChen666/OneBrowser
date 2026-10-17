@@ -48,6 +48,18 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 用户存储配额（USER_QUOTA_GB，0=不限）：按已 ready 快照累计字节数
+	if s.Cfg.UserQuotaBytes > 0 {
+		var used int64
+		if err := s.DB.Pool.QueryRow(r.Context(),
+			`SELECT COALESCE(SUM(size_bytes),0) FROM snapshots WHERE user_id=$1 AND state='ready'`,
+			id.UserID).Scan(&used); err == nil && used >= s.Cfg.UserQuotaBytes {
+			writeErr(w, http.StatusInsufficientStorage, "quota_exceeded",
+				"存储配额已用尽：请删除不再使用的环境，或联系管理员扩容")
+			return
+		}
+	}
+
 	snapID := store.NewUUID()
 	if _, err := s.DB.Pool.Exec(r.Context(),
 		`INSERT INTO snapshots (id, env_id, user_id, device_id, based_on, state)
@@ -134,6 +146,7 @@ func (s *Service) Commit(w http.ResponseWriter, r *http.Request) {
 //  1. ready 只留最近 SnapshotRetention 个（0=不清理），protectID（当前基线）即使
 //     排在窗口外也不删；
 //  2. uploading 超过 StaleUploadingTTL 未 commit 的视为残骸（上传中断）。
+//
 // 被清理的快照连同 S3 对象（manifest + blob）一起删除；S3 失败仅记日志（DB 已删，
 // 孤儿对象由存储生命周期策略兜底）。失败不返回错误——调用方均为 best-effort。
 func (s *Service) pruneEnv(ctx context.Context, userID, envID, protectID string) {

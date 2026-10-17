@@ -1,0 +1,11 @@
+# Caddy 反代：自动 HTTPS（ACME，Let's Encrypt）。X-Forwarded-For 供服务端限流取真实 IP。
+# 证书联系人邮箱可用环境变量 ACME_EMAIL 启用——需要时在站点块加一行：email {$ACME_EMAIL}
+{$DOMAIN} {
+	encode gzip zstd
+
+	# 快照上传/下载走预签名 URL 直连对象存储，不经本反代——这里只代理 API/WS
+	reverse_proxy server:8787 {
+		header_up X-Forwarded-For {remote_host}
+	}
+	# /v1/ws 的 Upgrade 头 Caddy 自动透传
+}

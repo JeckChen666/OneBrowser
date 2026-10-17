@@ -202,6 +202,58 @@ func TestPruneEnvDisabledWhenRetentionZero(t *testing.T) {
 	}
 }
 
+// 配额：USER_QUOTA_GB 语义——已 ready 快照累计超配额后 Create 返回 413。
+func TestCreateRejectsWhenQuotaExceeded(t *testing.T) {
+	svc, userID, envID := newTestService(t)
+	ctx := context.Background()
+	svc.Cfg.UserQuotaBytes = 100 // 极小配额
+
+	// 预置一份 150 字节的 ready 快照（直接写库模拟历史用量）
+	q := insertSnap(t, svc.DB, userID, envID, "ready", time.Minute)
+	if _, err := svc.DB.Pool.Exec(ctx,
+		`UPDATE snapshots SET size_bytes=150 WHERE id=$1`, q); err != nil {
+		t.Fatal(err)
+	}
+
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(auth.WithIdentity(req.Context(),
+				auth.Identity{UserID: userID, DeviceID: "dev-1"})))
+		})
+	})
+	r.Post("/envs/{envID}/snapshots/", svc.Create)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/envs/"+envID+"/snapshots/", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("超配额应 413，得到 %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Error.Code != "quota_exceeded" {
+		t.Fatalf("错误码应为 quota_exceeded，得到 %s", body.Error.Code)
+	}
+
+	// 配额放开（0=不限）后恢复
+	svc.Cfg.UserQuotaBytes = 0
+	resp2, err := http.Post(srv.URL+"/envs/"+envID+"/snapshots/", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("不限配额应 201，得到 %d", resp2.StatusCode)
+	}
+}
+
 // 集成：Commit 触发异步保留清理（完整 HTTP 路径）。
 func TestCommitTriggersPrune(t *testing.T) {
 	svc, userID, envID := newTestService(t)

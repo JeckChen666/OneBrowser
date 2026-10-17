@@ -1,0 +1,104 @@
+--- a/components/os_crypt/common/os_crypt_switches.h
++++ b/components/os_crypt/common/os_crypt_switches.h
+@@ -19,6 +19,12 @@
+ 
+ #endif  // BUILDFLAG(IS_APPLE)
+ 
++// OneBrowser: per-environment os_crypt key as hex (must decode to exactly the
++// derived-key size). When present, key derivation bypasses the OS key store so
++// the profile can roam across devices; the key is derived from the user's DEK
++// on the client side (see OneBrowser docs/v0.4.0-plan.md).
++inline constexpr char kOsCryptKey[] = "os-crypt-key";
++
+ }  // namespace os_crypt::switches
+ 
+ #endif  // COMPONENTS_OS_CRYPT_COMMON_OS_CRYPT_SWITCHES_H_
+--- a/components/os_crypt/sync/os_crypt_mac.mm
++++ b/components/os_crypt/sync/os_crypt_mac.mm
+@@ -16,6 +16,7 @@
+ #include "base/logging.h"
+ #include "base/memory/singleton.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_view_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/synchronization/lock.h"
+@@ -119,6 +120,28 @@
+ bool OSCryptImpl::DeriveKey() {
+   base::AutoLock auto_lock(OSCryptImpl::GetLock());
+ 
++  // OneBrowser: --os-crypt-key=<hex> injects the derived key directly,
++  // bypassing the Keychain so the profile can roam across devices.
++  if (!key_) {
++    const base::CommandLine* onebrowser_cmd =
++        base::CommandLine::ForCurrentProcess();
++    if (onebrowser_cmd->HasSwitch(os_crypt::switches::kOsCryptKey)) {
++      std::string onebrowser_hex =
++          onebrowser_cmd->GetSwitchValueASCII(
++              os_crypt::switches::kOsCryptKey);
++      std::string onebrowser_bytes;
++      if (base::HexStringToString(onebrowser_hex, &onebrowser_bytes) &&
++          onebrowser_bytes.size() == kDerivedKeySize) {
++        std::array<uint8_t, kDerivedKeySize> onebrowser_key;
++        base::as_writable_byte_span(onebrowser_key).copy_from(
++            base::as_byte_span(onebrowser_bytes));
++        key_ = onebrowser_key;
++        try_keychain_ = false;
++        return true;
++      }
++    }
++  }
++
+   // Fast fail when there's no key and derivation already failed in an earlier
+   // call to DeriveKey().
+   if (!try_keychain_ && !key_) {
+--- a/components/os_crypt/sync/os_crypt_linux.cc
++++ b/components/os_crypt/sync/os_crypt_linux.cc
+@@ -10,15 +10,18 @@
+ #include <iterator>
+ #include <memory>
+ 
++#include "base/command_line.h"
+ #include "base/logging.h"
+ #include "base/memory/singleton.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/string_view_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/synchronization/lock.h"
+ #include "base/task/single_thread_task_runner.h"
++#include "components/os_crypt/common/os_crypt_switches.h"
+ #include "components/os_crypt/sync/key_storage_config_linux.h"
+ #include "components/os_crypt/sync/key_storage_linux.h"
+ #include "components/os_crypt/sync/os_crypt_metrics.h"
+@@ -303,6 +306,28 @@
+     return true;
+   }
+ 
++  // OneBrowser: --os-crypt-key=<hex> injects the derived key directly,
++  // bypassing the system key store so the profile can roam across devices.
++  {
++    const base::CommandLine* onebrowser_cmd =
++        base::CommandLine::ForCurrentProcess();
++    if (onebrowser_cmd->HasSwitch(os_crypt::switches::kOsCryptKey)) {
++      std::string onebrowser_hex =
++          onebrowser_cmd->GetSwitchValueASCII(
++              os_crypt::switches::kOsCryptKey);
++      std::string onebrowser_bytes;
++      if (base::HexStringToString(onebrowser_hex, &onebrowser_bytes) &&
++          onebrowser_bytes.size() == OSCryptImpl::kDerivedKeyBytes) {
++        std::array<uint8_t, OSCryptImpl::kDerivedKeyBytes> onebrowser_key;
++        base::as_writable_byte_span(onebrowser_key).copy_from(
++            base::as_byte_span(onebrowser_bytes));
++        v11_key_ = onebrowser_key;
++        try_v11_ = true;
++        return true;
++      }
++    }
++  }
++
+   std::unique_ptr<KeyStorageLinux> key_storage;
+   if (storage_provider_factory_for_testing_) {
+     key_storage = std::move(storage_provider_factory_for_testing_).Run();

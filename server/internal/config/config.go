@@ -28,6 +28,10 @@ type Config struct {
 	SnapshotRetention int           // 每环境保留的 ready 快照数（最新 N 个；0=不清理）
 	StaleUploadingTTL time.Duration // uploading 未 commit 的过期时长（残骸清扫）
 
+	AuthRatePerMin int   // 认证接口每 IP 每分钟令牌数（0=不限流）
+	AuthRateBurst int    // 令牌桶容量
+	UserQuotaBytes int64 // 每用户快照存储配额（0=不限）
+
 	PresignPutTTL time.Duration
 	PresignGetTTL time.Duration
 }
@@ -53,6 +57,10 @@ func Load() Config {
 
 		SnapshotRetention: getenvInt("SNAPSHOT_RETENTION", 5),
 		StaleUploadingTTL: time.Duration(getenvInt("STALE_UPLOADING_HOURS", 24)) * time.Hour,
+
+		AuthRatePerMin: getenvInt("AUTH_RATE_PER_MIN", 20),
+		AuthRateBurst:  getenvInt("AUTH_RATE_BURST", 10),
+		UserQuotaBytes: int64(getenvInt("USER_QUOTA_GB", 2)) << 30,
 
 		PresignPutTTL: 15 * time.Minute,
 		PresignGetTTL: 60 * time.Minute,

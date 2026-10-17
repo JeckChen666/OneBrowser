@@ -1,0 +1,14 @@
+# 服务端镜像（多阶段：构建器 + 运行时）
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ ./
+RUN CGO_ENABLED=0 go build -ldflags='-s -w' -o /onesrv ./cmd/onesrv
+
+FROM alpine:3.20
+RUN adduser -D -u 10001 srv && apk add --no-cache ca-certificates
+USER srv
+COPY --from=build /onesrv /usr/local/bin/onesrv
+EXPOSE 8787
+ENTRYPOINT ["onesrv"]

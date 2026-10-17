@@ -55,7 +55,7 @@ func main() {
 	leaseSvc.SetNotifier(hub)
 
 	router := api.NewRouter(api.Deps{
-		DB: db, S3: s3c, Auth: authSvc, Envs: envSvc, Snaps: snapSvc, Leases: leaseSvc, Hub: hub,
+		DB: db, S3: s3c, Auth: authSvc, Envs: envSvc, Snaps: snapSvc, Leases: leaseSvc, Hub: hub, Cfg: cfg,
 	})
 
 	go leaseSvc.RunSweeper(ctx)

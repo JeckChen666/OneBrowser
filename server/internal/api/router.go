@@ -10,9 +10,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"onebrowser/server/internal/auth"
+	"onebrowser/server/internal/config"
 	"onebrowser/server/internal/envs"
 	"onebrowser/server/internal/geo"
 	"onebrowser/server/internal/leases"
+	"onebrowser/server/internal/ratelimit"
 	"onebrowser/server/internal/s3s3"
 	"onebrowser/server/internal/snapshots"
 	"onebrowser/server/internal/store"
@@ -27,6 +29,7 @@ type Deps struct {
 	Snaps  *snapshots.Service
 	Leases *leases.Service
 	Hub    *ws.Hub
+	Cfg    config.Config
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -41,9 +44,33 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(middleware.Logger)
 
-	// 公开
-	r.Get("/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "onebrowser-server"})
+	// 认证接口限流（防撞库/爆破）：每 IP 令牌桶，AUTH_RATE_PER_MIN=0 关闭
+	authLimiter := ratelimit.New(d.Cfg.AuthRatePerMin, d.Cfg.AuthRateBurst)
+	authLimited := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			authLimiter.Middleware(h).ServeHTTP(w, r)
+		}
+	}
+
+	// 公开。浅探针给 LB；?deep=1 附带依赖状态（db ping + s3 bucket 探测）
+	r.Get("/v1/health", func(w http.ResponseWriter, req *http.Request) {
+		resp := map[string]any{"ok": true, "service": "onebrowser-server"}
+		if req.URL.Query().Get("deep") == "1" {
+			deps := map[string]string{}
+			if err := d.DB.Pool.Ping(req.Context()); err != nil {
+				deps["db"] = "down: " + err.Error()
+			} else {
+				deps["db"] = "ok"
+			}
+			if err := d.S3.Probe(req.Context()); err != nil {
+				deps["s3"] = "down: " + err.Error()
+			} else {
+				deps["s3"] = "ok"
+			}
+			resp["deps"] = deps
+			resp["bucket"] = d.Cfg.S3Bucket
+		}
+		writeJSON(w, http.StatusOK, resp)
 	})
 	r.Get("/v1/geo", func(w http.ResponseWriter, r *http.Request) {
 		ip := r.URL.Query().Get("ip")
@@ -52,9 +79,9 @@ func NewRouter(d Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, geo.Lookup(r.Context(), ip))
 	})
-	r.Get("/v1/auth/kdf-info", d.Auth.HandleKdfInfo)
-	r.Post("/v1/auth/register", d.Auth.HandleRegister)
-	r.Post("/v1/auth/login", d.Auth.HandleLogin)
+	r.Get("/v1/auth/kdf-info", authLimited(d.Auth.HandleKdfInfo))
+	r.Post("/v1/auth/register", authLimited(d.Auth.HandleRegister))
+	r.Post("/v1/auth/login", authLimited(d.Auth.HandleLogin))
 	r.Get("/v1/ws", d.Hub.HandleWS)
 
 	// 需登录
