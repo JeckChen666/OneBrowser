@@ -10,6 +10,9 @@ export interface OpenOptions {
   restore?: StructuredData | null
   /** L2 恢复：已解包的 profile 目录（宿主侧），kernel 承载直接作为 user-data-dir 使用 */
   restoreDir?: string
+  /** os_crypt 每环境密钥（hex，16B；由 DEK 经 HKDF 派生）。仅打了一百号补丁的
+   *  内核生效（profile 漫游）；旧内核忽略未知 switch，无害 */
+  osCryptKey?: string
   /** kernel 模式忽略（内核窗口自带 UI） */
   hidden?: boolean
   /** 指纹 flags（仅 kernel 模式） */

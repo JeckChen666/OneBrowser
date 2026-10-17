@@ -37,6 +37,7 @@ import {
   type SnapshotPayload
 } from './snapshotEngine'
 import { untarTo } from './profileArchive'
+import { subkey } from './e2e'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type {
@@ -454,6 +455,12 @@ export class AppService {
     if (this.isEnvRunning(envId)) throw new Error('环境已打开')
     const host = this.hostFor(env)
     const fingerprint = await this.resolveFingerprint(env)
+    // os_crypt 每环境密钥：DEK→HKDF（同账号跨设备一致，env 级隔离）→ 16B hex。
+    // 双端内核（mac/linux）派生密钥长度均为 16 字节（148 源码确认）
+    const osCryptKey =
+      env.hosting === 'kernel' && this.dek
+        ? Buffer.from(subkey(this.dek, `os-crypt:${envId}`).slice(0, 16)).toString('hex')
+        : undefined
 
     // kernel 承载：先确保内核就绪（可能触发首次下载）；docker 模式无需原生内核
     if (env.hosting === 'kernel' && !this.kernelDockerMode && !this.kernelManager.status().ready) {
@@ -471,7 +478,7 @@ export class AppService {
         // L2：profile 已解包到 plan.dir，内核直接以它为 user-data-dir 启动；
         // 叠加 L1 结构化注入补齐会话 cookie 与惰性刷盘的 localStorage（双写快照的副本）
         const l1 = env.l1SnapshotId ? await this.fetchL1Payload(envId, env.l1SnapshotId) : null
-        await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint })
+        await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint, osCryptKey })
         this.setPhase(envId, 'running', '已从云端基线克隆（文件级 L2）')
         if (plan.kernelVersion !== this.kernelTag()) {
           this.notify('warning', `「${env.name}」基线来自不同版本的内核，如登录态异常请重新登录并更新基线`)
@@ -480,7 +487,7 @@ export class AppService {
         return
       }
       const restore = plan?.kind === 'structured' ? plan.payload : null
-      await host.open(env, { restore, hidden, fingerprint })
+      await host.open(env, { restore, hidden, fingerprint, osCryptKey })
       this.setPhase(
         envId,
         'running',
@@ -505,12 +512,12 @@ export class AppService {
       : await this.downloadBase(envId)
     if (plan?.kind === 'files') {
       const l1 = env.l1SnapshotId ? await this.fetchL1Payload(envId, env.l1SnapshotId) : null
-      await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint })
+      await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint, osCryptKey })
       if (plan.kernelVersion !== this.kernelTag()) {
         this.notify('warning', `「${env.name}」基线来自不同版本的内核，如登录态异常请重新登录并更新基线`)
       }
     } else {
-      await host.open(env, { restore: plan?.kind === 'structured' ? plan.payload : null, hidden, fingerprint })
+      await host.open(env, { restore: plan?.kind === 'structured' ? plan.payload : null, hidden, fingerprint, osCryptKey })
     }
     this.agent.startHeartbeat(envId)
     this.setPhase(envId, 'running', outcome.stale ? '已接管（旧基线：对方设备未及时上传）' : '已接管')

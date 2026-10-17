@@ -96,6 +96,11 @@ export class ExternalKernelHost implements Host {
     if (env.proxy?.host) {
       args.push(`--proxy-server=${env.proxy.scheme}://${env.proxy.host}:${env.proxy.port}`)
     }
+    // os_crypt 每环境密钥（scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch）：
+    // 恒定注入——带补丁的内核由此获得可漫游 profile；旧内核忽略未知 switch
+    if (opts.osCryptKey) {
+      args.push(`--os-crypt-key=${opts.osCryptKey}`)
+    }
 
     let re: KernelRunningEnv | null = null
     console.log(`[kernel] 启动环境 ${env.id}（launcher=${this.launcher.constructor.name}）`)
