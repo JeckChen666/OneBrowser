@@ -17,3 +17,7 @@ apps/desktop/dist/
 .idea/
 scripts/kernel-docker/kernel/
 scripts/kernel-docker/*.tar.xz
+
+# electron-builder 产物与构建资源
+apps/desktop/release/
+apps/desktop/build/

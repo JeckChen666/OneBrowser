@@ -14,6 +14,7 @@
 
 ## 当前状态（快照，2026-10-17）
 
+- **V0.4-B mac 安装包已完成**：electron-builder 双架构 dmg（x64 144MB / arm64 140MB，ad-hoc 签名，不带内核首用下载）；**安装包内 app 实测 builtin e2e 17/17 + UI 截图冒烟通过**（asar/CJS preload/依赖收集全对）；`make dist-mac`
 - **V0.3.1 已完成**：L2 快照 zstd 压缩（36KB vs gzip 50KB）+ 观测日志；修复 macOS bsdtar 流式 zstd 两大坑（stdout 静默截断 / stdin fork 失败 → 临时文件中转）；回归 l2 7/7 · interop 13/13
 - **V0.4 规划已出**（`docs/v0.4.0-plan.md`）：原生内核 + os_crypt 补丁（148 源码先行）/ 安装包分发 / 生产硬化；builtin L2 评估结论=不做（L1 回退已闭环）
 - **V0.3.0 已发版**：L2 文件级快照全链路（kernel 环境 profile 整体漫游 + 双写 L1 副本互迁移兜底）；验证基线 l2 7/7 · interop 13/13 · fp 10/10 · builtin 17/17 · kernel-smoke 7/7
@@ -27,12 +28,13 @@
 
 ## 下一步（按优先级，V0.4 执行）
 
-1. **V0.4-B 安装包分发**（最快见效）：electron-builder 三平台（mac dmg x64/arm64、win nsis、linux AppImage）+ 干净虚拟机全流程验收；内核继续首用下载。见 `docs/v0.4.0-plan.md` §3。
-2. **V0.4-A 内核补丁 PoC**：基于 fingerprint-chromium **148 源码分支**（150 源码未放）构建 mac 产物 + os_crypt 注入补丁（DEK 派生密钥）+ 漫游 PoC；磁盘/耗时预算见计划 §1/§6。
-3. **V0.4-C 生产硬化**：compose 生产栈 + Caddy TLS + 限流/配额 + 备份演练 + `deploy/production.md`。
+1. **V0.4-A 内核补丁 PoC**：基于 fingerprint-chromium **148 源码分支**（150 源码未放）构建 mac 产物 + os_crypt 注入补丁（DEK 派生密钥）+ 漫游 PoC；磁盘/耗时预算见计划 §1/§6。
+2. **V0.4-C 生产硬化**：compose 生产栈 + Caddy TLS + 限流/配额 + 备份演练 + `deploy/production.md`。
+3. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 
 ## 已完成归档
 
+- **[2026-10-17] V0.4-B mac（安装包）**：electron-builder.yml + dist:mac/dist 脚本 + pnpm allowBuilds（electron-winstaller=false）；dmg 双架构构建与包内 e2e 验收。
 - **[2026-10-17] V0.3.1（zstd + 观测）**：tar+zstd（gzip 兜底）+ format 入 manifest + 临时文件中转规避 bsdtar 流式缺陷 + 排除表补 Dawn 缓存 + 体积/耗时日志。
 - **[2026-10-17] V0.3.0（L2 文件级快照）**：snapshotEngine kind=files 二进制信封；Docker 挂载直通 + docker pause 冻结抓取；双写（L2 基线 + L1 副本入环境配置）与 builtin 回退；L2 恢复叠加 L1 注入补会话 cookie；修复 newTab 时序竞态（evaluate 落 about:blank 空上下文）；e2e:l2 7/7。
 - **[2026-10-17] M6 预研（GO）**：双容器 PoC 证实 Linux 内核 profile 可漫游（`docs/m6-research.md`）；entrypoint 修 X 锁重入；PoC 验收脚本入库。

@@ -1,0 +1,37 @@
+# electron-builder 配置（V0.4-B 安装包分发，docs/v0.4.0-plan.md §3）
+# 构建：pnpm dist:mac（本机出 x64+arm64 dmg，未签名=ad-hoc，首版不带内核，首用时 kernelManager 下载）
+appId: app.onebrowser.desktop
+productName: OneBrowser
+copyright: Copyright © 2026 OneBrowser
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  # electron-vite 产物（main 为 ESM .mjs；preload 为 CJS .cjs——沙箱渲染器要求）
+  - out/**
+  - package.json
+
+# 生产依赖（ws / @noble/hashes / element-plus / vue）由 electron-builder 自动收进 asar 的 node_modules
+
+asar: true
+
+mac:
+  category: public.app-category.productivity
+  # 首版无开发者证书：ad-hoc 签名（本机可运行；分发需用户右键打开或后续购买证书）
+  identity: null
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+
+win:
+  target: nsis
+  artifactName: ${productName}-${version}-setup.${ext}
+
+linux:
+  target: AppImage
+  category: Utility
+  artifactName: ${productName}-${version}-${arch}.AppImage
+
+# 图标待设计（build/icon.* 缺省时使用 Electron 默认图标）

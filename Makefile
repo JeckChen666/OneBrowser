@@ -39,6 +39,10 @@ test: test-db
 desktop-build:
 	cd apps/desktop && pnpm install --silent && pnpm build
 
+# 安装包（mac dmg x64+arm64；产物在 apps/desktop/release/，未签名=ad-hoc）
+dist-mac:
+	cd apps/desktop && pnpm dist:mac
+
 # 端到端验证：需要先 make infra && make server && make site（各自后台运行）
 e2e: desktop-build
 	cd apps/desktop && pnpm e2e

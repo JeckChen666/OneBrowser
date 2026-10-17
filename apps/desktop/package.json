@@ -1,7 +1,7 @@
 {
   "name": "onebrowser-desktop",
-  "version": "0.1.0",
-  "description": "OneBrowser 桌面端（V0.1.0）",
+  "version": "0.3.1",
+  "description": "OneBrowser 桌面端（指纹环境 + 登录态云端共享）",
   "main": "out/main/index.mjs",
   "author": "OneBrowser",
   "private": true,
@@ -15,13 +15,16 @@
     "e2e:interop": "electron-vite build && electron . --e2e-interop",
     "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker",
     "e2e:fp": "electron-vite build && electron . --e2e-fp",
-    "e2e:l2": "electron-vite build && electron . --e2e-l2"
+    "e2e:l2": "electron-vite build && electron . --e2e-l2",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist": "electron-vite build && electron-builder -mwl"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-vue": "^6.0.9",
     "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
