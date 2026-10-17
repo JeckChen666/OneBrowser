@@ -176,6 +176,15 @@
         <el-form-item label="主页">
           <el-input v-model="editForm.homepage" />
         </el-form-item>
+        <el-form-item label="会话检测">
+          <div class="proxy-row">
+            <el-input v-model="editForm.scPath" placeholder="检测路径，如 /api/whoami" style="flex: 1" />
+          </div>
+          <div class="proxy-row" style="margin-top: 6px">
+            <el-input v-model="editForm.scMarker" placeholder="登录标记，响应体包含即视为有效" style="flex: 1" />
+          </div>
+          <span class="hint">打开环境恢复登录态后探测；失效则提示重新登录并更新基线。留空不检测</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEdit = false">取消</el-button>
@@ -231,7 +240,7 @@ const proxy = reactive<Required<Pick<ProxyConfig, 'scheme' | 'host' | 'port'>> &
   username: '',
   password: ''
 })
-const editForm = reactive({ name: '', homepage: '' })
+const editForm = reactive({ name: '', homepage: '', scPath: '', scMarker: '' })
 
 async function guard(fn: () => Promise<void>): Promise<void> {
   try {
@@ -312,6 +321,8 @@ function edit(row: EnvView): void {
   editing.value = row
   editForm.name = row.env.name
   editForm.homepage = row.env.homepage
+  editForm.scPath = row.env.sessionCheck?.urlPath || ''
+  editForm.scMarker = row.env.sessionCheck?.loggedInMarker || ''
   showEdit.value = true
 }
 
@@ -319,7 +330,15 @@ async function saveEdit(): Promise<void> {
   if (!editing.value) return
   creating.value = true
   await guard(async () => {
-    await ob.updateEnv(editing.value!.env.id, { name: editForm.name, homepage: editForm.homepage })
+    const sessionCheck =
+      editForm.scPath.trim() && editForm.scMarker.trim()
+        ? { urlPath: editForm.scPath.trim(), loggedInMarker: editForm.scMarker.trim() }
+        : null // 留空 = 清除检测
+    await ob.updateEnv(editing.value!.env.id, {
+      name: editForm.name,
+      homepage: editForm.homepage,
+      sessionCheck
+    })
     showEdit.value = false
   })
   creating.value = false

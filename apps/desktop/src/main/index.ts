@@ -55,8 +55,17 @@ function registerIPC(): void {
   handle('ob:login', (email: string, password: string) => svc.login(email, password))
   handle('ob:logout', () => svc.logout())
   handle('ob:createEnv', (input: CreateEnvInput) => svc.createEnv(input))
-  handle('ob:updateEnv', (id: string, patch: { name?: string; homepage?: string; proxy?: ProxyConfig }) =>
-    svc.updateEnv(id, patch)
+  handle(
+    'ob:updateEnv',
+    (
+      id: string,
+      patch: {
+        name?: string
+        homepage?: string
+        proxy?: ProxyConfig
+        sessionCheck?: { urlPath: string; loggedInMarker: string } | null
+      }) =>
+      svc.updateEnv(id, patch)
   )
   handle('ob:deleteEnv', (id: string) => svc.deleteEnv(id))
   handle('ob:openEnv', (id: string) => svc.openEnv(id))

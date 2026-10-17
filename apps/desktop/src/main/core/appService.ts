@@ -391,7 +391,7 @@ export class AppService {
       proxy?: ProxyConfig
       fingerprint?: EnvConfig['fingerprint']
       hosting?: EnvConfig['hosting']
-      sessionCheck?: EnvConfig['sessionCheck']
+      sessionCheck?: EnvConfig['sessionCheck'] | null
     }
   ): Promise<void> {
     const cur = this.envs.get(id)
@@ -402,7 +402,8 @@ export class AppService {
       seed: cur.seed,
       proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy,
       fingerprint: patch.fingerprint !== undefined ? patch.fingerprint : cur.fingerprint,
-      sessionCheck: patch.sessionCheck !== undefined ? patch.sessionCheck : cur.sessionCheck,
+      // null=显式清除；undefined=不修改
+      sessionCheck: patch.sessionCheck == null ? (patch.sessionCheck === null ? undefined : cur.sessionCheck) : patch.sessionCheck,
       kernelVersion: cur.kernelVersion
     })
     await this.cloud.updateEnv(id, {

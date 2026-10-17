@@ -21,7 +21,12 @@ const api = {
   createEnv: (input: CreateEnvInput): Promise<void> => invoke('ob:createEnv', input),
   updateEnv: (
     id: string,
-    patch: { name?: string; homepage?: string; proxy?: ProxyConfig }
+    patch: {
+      name?: string
+      homepage?: string
+      proxy?: ProxyConfig
+      sessionCheck?: { urlPath: string; loggedInMarker: string } | null
+    }
   ): Promise<void> => invoke('ob:updateEnv', id, patch),
   deleteEnv: (id: string): Promise<void> => invoke('ob:deleteEnv', id),
   openEnv: (id: string): Promise<void> => invoke('ob:openEnv', id),
