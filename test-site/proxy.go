@@ -34,6 +34,14 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	out.RequestURI = ""
 	out.Header.Del("Proxy-Connection")
 	out.Header.Set("Connection", "close")
+	// 追加 X-Forwarded-For（标准正向代理行为；站点侧 clientIP 据此回显真实来源）
+	if client, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		if prior := out.Header.Get("X-Forwarded-For"); prior != "" {
+			out.Header.Set("X-Forwarded-For", prior+", "+client)
+		} else {
+			out.Header.Set("X-Forwarded-For", client)
+		}
+	}
 	out.Close = true
 	resp, err := http.DefaultTransport.RoundTrip(out)
 	if err != nil {

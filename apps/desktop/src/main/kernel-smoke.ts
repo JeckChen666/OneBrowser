@@ -43,19 +43,20 @@ const FP_EXPR = `(() => {
   const cv=document.createElement('canvas');cv.width=220;cv.height=40;const ctx=cv.getContext('2d');
   ctx.textBaseline='top';ctx.font='16px Arial';ctx.fillStyle='#f60';ctx.fillRect(10,5,80,20);
   ctx.fillStyle='#069';ctx.fillText('OneBrowser,fp',15,10);ctx.fillStyle='rgba(102,204,0,.7)';ctx.fillText('OneBrowser,fp',15,20);
-  let gl='-',glr='-';
+  let gl='-',glr='-',tz='-',lang='-',mem='-';
   try{const g=document.createElement('canvas').getContext('webgl');
   const e=g.getExtension('WEBGL_debug_renderer_info');
   gl=e?g.getParameter(e.UNMASKED_VENDOR_WEBGL):g.getParameter(g.VENDOR);
   glr=e?g.getParameter(e.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)}catch(err){}
+  try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone;lang=navigator.language;mem=navigator.deviceMemory}catch(err){}
   return JSON.stringify({ua:navigator.userAgent,canvas:'0x'+djb2(cv.toDataURL()),gl,glr,
-    hc:navigator.hardwareConcurrency})
+    tz,lang,mem,hc:navigator.hardwareConcurrency})
 })()`
 
 export { FP_EXPR }
 
-// 注：容器内核上 Intl/locale 类读取存在挂死兼容问题（见 V0.2.0-S3 排障记录），
-// 指纹读取仅覆盖稳定字段（UA/canvas/WebGL/CPU 核数）
+// 注：容器内核上 Intl/locale 类读取曾存在挂死问题（KI-2），根因与 KI-1 同源——
+// 非法 seed；seed 校验修复后 Intl 读取恢复稳定（V0.2.0-S4 验证），字段已全部恢复
 interface Fp {
   ua: string
   canvas: string

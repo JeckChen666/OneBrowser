@@ -19,6 +19,8 @@ import {
   wrapDEK,
   sha256Hex,
   randomId,
+  randomSeed,
+  isValidSeed,
   type KdfParamsJson
 } from './e2e'
 import { seal, open, sealConfig, openConfig, manifestJson, blobBytes, type SealedSnapshot, type SnapshotPayload } from './snapshotEngine'
@@ -305,6 +307,7 @@ export class AppService {
     }
     const { envs } = await this.cloud.listEnvs()
     const next = new Map<string, EnvConfig>()
+    const seedBackfills: Array<{ row: (typeof envs)[number]; cfg: Record<string, unknown>; seed: string }> = []
     for (const row of envs) {
       let cfg: {
         hosting?: EnvConfig['hosting']
@@ -319,13 +322,20 @@ export class AppService {
       } catch {
         // 配置解密失败（如密钥轮换后旧数据）——降级为默认配置
       }
+      // seed 回填：旧环境/解密降级可能缺 seed。必须持久化回写，否则每次刷新
+      // 重新随机 → 同一环境指纹漂移；且随机值必须为合法 32 位整数（KI-1）
+      let seed = cfg.seed || ''
+      if (!isValidSeed(seed)) {
+        seed = randomSeed()
+        seedBackfills.push({ row, cfg, seed })
+      }
       next.set(row.id, {
         id: row.id,
         name: row.name,
         mode: row.mode,
         hosting: cfg.hosting === 'kernel' ? 'kernel' : 'builtin', // 旧环境缺省 builtin，保持兼容
         homepage: cfg.homepage || '',
-        seed: cfg.seed || randomId(),
+        seed,
         proxy: cfg.proxy,
         fingerprint: cfg.fingerprint,
         kernelVersion: cfg.kernelVersion,
@@ -338,17 +348,30 @@ export class AppService {
       else this.leaseInfo.delete(row.id)
     }
     this.envs = next
+    // 回写缺 seed 的环境配置（best-effort；失败则下次刷新重试）
+    for (const { row, cfg, seed } of seedBackfills) {
+      try {
+        const configEnc = await sealConfig(this.dek!, row.id, { ...cfg, seed })
+        await this.cloud.updateEnv(row.id, { name: row.name, configEnc })
+      } catch (e) {
+        console.warn(`[refreshEnvs] seed 回填失败 ${row.id}:`, e instanceof Error ? e.message : e)
+      }
+    }
     this.push()
   }
 
   async createEnv(input: CreateEnvInput): Promise<void> {
     if (!this.logged_in) throw new Error('未登录')
+    if (input.seed !== undefined && !isValidSeed(input.seed)) {
+      // 非法 seed 会毒化内核（KI-1）：必须在此拦下，不能静默换值
+      throw new Error('指纹种子必须是 1~2147483647 的整数')
+    }
     const id = randomId()
     const hosting = input.hosting === 'builtin' ? 'builtin' : 'kernel'
     const configEnc = await sealConfig(this.dek!, id, {
       hosting,
       homepage: input.homepage,
-      seed: input.seed || randomId(),
+      seed: input.seed || randomSeed(),
       proxy: input.proxy,
       fingerprint: input.fingerprint,
     })

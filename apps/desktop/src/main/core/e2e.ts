@@ -4,7 +4,7 @@
 //   DEK     —— 随机数据密钥；wrappedDek(KEK 加密) 托管服务端
 //   每快照子密钥 = HKDF-SHA256(DEK, salt=purpose)
 import { argon2id } from '@noble/hashes/argon2.js'
-import { hkdfSync, randomBytes, createHash } from 'node:crypto'
+import { hkdfSync, randomBytes, randomInt, createHash } from 'node:crypto'
 
 export interface KdfParamsJson {
   alg: 'argon2id'
@@ -118,4 +118,15 @@ export function sha256Hex(buf: Uint8Array): string {
 
 export function randomId(): string {
   return randomBytes(16).toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5')
+}
+
+/** 指纹种子：fingerprint-chromium 的 --fingerprint 仅接受 32 位整数（官方 README）。
+ * 非整数 seed 会让内核解析失败，渲染进程首次读取 navigator.hardwareConcurrency
+ * 即主线程死锁（KI-1，docs/v0.2.0-s3-notes.md）——生成与校验都必须守住这条约束。 */
+export function randomSeed(): string {
+  return String(randomInt(1, 2147483647))
+}
+
+export function isValidSeed(seed: string): boolean {
+  return /^(0|[1-9]\d{0,9})$/.test(seed) && Number(seed) <= 2147483647
 }

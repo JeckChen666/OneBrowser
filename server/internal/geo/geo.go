@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -38,14 +39,34 @@ func isPrivate(ip string) bool {
 	return p.IsLoopback() || p.IsPrivate() || p.IsLinkLocalUnicast() || p.IsUnspecified()
 }
 
+// localTimezone：解析服务器本地 IANA 时区名。
+// time.Local.String() 在 macOS/Linux 上常返回 "Local"（Go 无法从 /etc/localtime
+// 文件内容反推名字），直接用会把本地分支错报成 UTC——按 TZ 环境变量、
+// /etc/localtime 符号链接（…/zoneinfo/<名字>）的顺序解析，兜底 UTC。
+func localTimezone() string {
+	if tz := os.Getenv("TZ"); tz != "" && tz != "Local" {
+		if _, err := time.LoadLocation(tz); err == nil {
+			return tz
+		}
+	}
+	if p, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.LastIndex(p, "zoneinfo/"); i >= 0 {
+			name := strings.TrimPrefix(p[i+len("zoneinfo/"):], "/")
+			if _, err := time.LoadLocation(name); err == nil {
+				return name
+			}
+		}
+	}
+	if s := time.Local.String(); s != "" && s != "Local" {
+		return s
+	}
+	return "UTC"
+}
+
 // Lookup：私网 → 服务器本地时区；公网 → 外部 geo 服务（GEO_API 可换源），失败回退 UTC。
 func Lookup(ctx context.Context, ip string) Info {
 	if isPrivate(ip) {
-		tz := time.Local.String()
-		if tz == "" || tz == "Local" {
-			tz = "UTC"
-		}
-		return Info{IP: ip, Source: "local", Timezone: tz, Lang: "en-US"}
+		return Info{IP: ip, Source: "local", Timezone: localTimezone(), Lang: "en-US"}
 	}
 
 	api := os.Getenv("GEO_API")

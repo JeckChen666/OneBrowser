@@ -189,7 +189,9 @@ func (s *site) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *site) handleFP(w http.ResponseWriter, r *http.Request) {
-	render(w, tplFP, map[string]any{"UA": r.UserAgent(), "RemoteAddr": r.RemoteAddr})
+	// clientIP 而非裸 RemoteAddr：经正向代理时回显 X-Forwarded-For（真实来源），
+	// 供 T13 断言「页面请求确实经过代理」
+	render(w, tplFP, map[string]any{"UA": r.UserAgent(), "RemoteAddr": clientIP(r)})
 }
 
 func (s *site) routes() *http.ServeMux {

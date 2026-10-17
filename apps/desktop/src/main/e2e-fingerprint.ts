@@ -6,14 +6,17 @@
 //       时区/语言与 /v1/geo 对该代理出口的推导一致
 // 运行前置：server(:8787) + test-site(:18080) + Docker；测试站代理由本脚本自起（:18081）
 import { execFile, spawn as spawnProcess } from 'node:child_process'
+import { promisify } from 'node:util'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { AppService } from './core/appService'
 import { ensureDockerImage, FP_EXPR } from './kernel-smoke'
 import type { CanSend } from './core/cdp'
 import type { MainEvent } from '@shared/types'
+
+const execFileP = promisify(execFile)
 
 function lanIp(): string {
   for (const nets of Object.values(os.networkInterfaces())) {
@@ -111,7 +114,9 @@ export async function runE2EFingerprint(): Promise<number> {
     realWin.destroy()
     log(`宿主真实指纹：ua=${realFp.ua.slice(0, 60)}… canvas=${realFp.canvas}`)
 
-    const seedA = 'aaaa-seed-t9'
+    // seed 必须是 32 位整数：非整数 seed 会让内核渲染进程在读取
+    // navigator.hardwareConcurrency 时死锁（KI-1，docs/v0.2.0-s3-notes.md）
+    const seedA = '1000000009'
     const mkEnv = (name: string, seed: string): Promise<void> =>
       svc.createEnv({
         name,
@@ -184,18 +189,108 @@ export async function runE2EFingerprint(): Promise<number> {
     check('T10 同 seed 跨设备指纹完全一致', diff.length === 0, diff.length ? `差异字段: ${diff.join(',')}` : fields.join('/'))
 
     // T11：不同 seed → 隔离
-    await mkEnv('T11-异种子C', 'cccc-seed-t11')
+    await mkEnv('T11-异种子C', '2000000011')
     const c = await openAndRead('T11-异种子C')
     check('T11.1 不同 seed 的 canvas 指纹不同', a.fp.canvas !== c.fp.canvas, `${a.fp.canvas} vs ${c.fp.canvas}`)
     check('T11.2 不同 seed 的 CPU 核数/CPU 指纹不同', a.fp.hc !== c.fp.hc || a.fp.glr !== c.fp.glr)
 
-    exitCode = fail === 0 ? 0 : 1
-
-    // 收尾：关闭全部 kernel 环境
+    // 收起 A/B/C，让 T13 的容器是唯一的 ob-kernel-*（便于 docker inspect 取参）
     for (const name of ['T9-指纹A', 'T10-同种子B', 'T11-异种子C']) {
       const id = svc.getState().envs.find((v) => v.env.name === name)?.env.id
       if (id) await svc.closeEnv(id).catch(() => undefined)
     }
+
+    // T13：代理链路 + auto 时区/语言（自起 test-site 代理 :18081，收尾关闭）
+    // 注：Docker Desktop 下容器→宿主机流量经 host 栈 NAT，代理侧来源恒为宿主机 IP，
+    // 无法用「来源=容器 IP」断言；改用「代理日志含页面请求 + 站点来源非 docker VM 网段」
+    const testSiteDir = path.resolve(app.getAppPath(), '../../test-site')
+    const proxyBin = path.join(os.tmpdir(), 'ob-testsite-proxy')
+    await execFileP('go', ['build', '-o', proxyBin, '.'], { cwd: testSiteDir, timeout: 120000 })
+    // 端口被占（上次运行的残留代理）会让 waitTcp 假成功——先拒绝启动
+    const stale = await new Promise<boolean>((resolve) => {
+      const s = net.connect(18081, '127.0.0.1')
+      s.once('connect', () => {
+        s.destroy()
+        resolve(true)
+      })
+      s.once('error', () => {
+        s.destroy()
+        resolve(false)
+      })
+    })
+    if (stale) throw new Error('端口 18081 被占用（残留的测试代理？请先清理）')
+    let proxyLog = ''
+    const proxyProc = spawnProcess(proxyBin, [], {
+      env: { ...process.env, PROXY_LISTEN: ':18081' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    proxyProc.stdout!.on('data', (c) => (proxyLog += c.toString()))
+    proxyProc.stderr!.on('data', (c) => (proxyLog += c.toString()))
+    try {
+      const portUp = await waitTcp(18081, 10000)
+      if (!portUp || proxyProc.exitCode !== null) throw new Error('测试代理未就绪（:18081）')
+      // 与 AppService.geoLookup 同路径：经代理查 /v1/geo，取 auto 模式应有的推导值
+      const geoRaw = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(18081, '127.0.0.1', () => {
+          socket.write(`GET ${SERVER}/v1/geo HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nConnection: close\r\n\r\n`)
+        })
+        socket.setTimeout(5000, () => {
+          socket.destroy()
+          reject(new Error('geo 经代理解析超时'))
+        })
+        let data = ''
+        socket.on('data', (chunk) => (data += chunk.toString()))
+        socket.on('end', () => resolve(data))
+        socket.on('error', reject)
+      })
+      const geo = JSON.parse(geoRaw.slice(geoRaw.indexOf('\r\n\r\n') + 4)) as { timezone: string; lang: string }
+      log(`T13 geo（经代理）：tz=${geo.timezone} lang=${geo.lang}`)
+
+      await svc.createEnv({
+        name: 'T13-代理D',
+        mode: 'snapshot',
+        hosting: 'kernel',
+        homepage: `${SITE}/fp`,
+        seed: '1500000013',
+        proxy: { scheme: 'http', host, port: PROXY_PORT },
+        fingerprint: { platform: 'Windows', timezoneMode: 'auto', langMode: 'auto' }
+      })
+      const d = await openAndRead('T13-代理D')
+      const remoteAddr = String(
+        await cdpEval(d.page, 'document.body.innerText.match(/RemoteAddr[^0-9]*([0-9a-f.:]+)/)?.[1] || ""')
+      )
+      log(`T13 页面指纹：tz=${d.fp.tz} lang=${d.fp.lang}；/fp RemoteAddr=${remoteAddr}`)
+
+      // 内核进程实参：--proxy-server + auto 推导的 --timezone/--accept-lang
+      const cid = (await execFileP('docker', ['ps', '-q', '--filter', 'name=ob-kernel-'])).stdout.trim().split('\n')[0]
+      const cmdArgs = cid
+        ? (JSON.parse((await execFileP('docker', ['inspect', '--format', '{{json .Config.Cmd}}', cid])).stdout) as string[])
+        : []
+      const has = (flag: string): boolean => cmdArgs.some((x) => x === flag || x.startsWith(flag + '='))
+      check('T13.1 内核经代理启动（--proxy-server）', has(`--proxy-server=http://${host}:${PROXY_PORT}`))
+      check(
+        'T13.2 auto 时区/语言注入内核参数（与 /v1/geo 经代理推导一致）',
+        has(`--timezone=${geo.timezone}`) && (has(`--accept-lang=${geo.lang}`) || has(`--lang=${geo.lang}`)),
+        `期望 --timezone=${geo.timezone} --accept-lang=${geo.lang}`
+      )
+      check(
+        'T13.3 页面请求确实经代理（代理日志含 /fp 请求；站点来源非 docker VM 直连网段）',
+        proxyLog.includes(`GET ${SITE}/fp`) && !remoteAddr.startsWith('192.168.65.'),
+        `代理日志见 ${SITE}/fp=${proxyLog.includes(`GET ${SITE}/fp`)}；RemoteAddr=${remoteAddr}`
+      )
+      check(
+        'T13.4 页面侧 Intl 时区/语言与 geo 推导一致',
+        d.fp.tz === geo.timezone && d.fp.lang === geo.lang,
+        `页面 tz=${d.fp.tz} lang=${d.fp.lang}`
+      )
+
+      const dId = svc.getState().envs.find((v) => v.env.name === 'T13-代理D')?.env.id
+      if (dId) await svc.closeEnv(dId).catch(() => undefined)
+    } finally {
+      proxyProc.kill()
+    }
+
+    exitCode = fail === 0 ? 0 : 1
     await svc.logout().catch(() => undefined)
   } catch (e) {
     log(`异常终止: ${e instanceof Error ? e.message : e}`)
