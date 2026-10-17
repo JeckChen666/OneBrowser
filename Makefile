@@ -1,4 +1,4 @@
-.PHONY: infra infra-down infra-logs server site desktop test e2e desktop-build clean
+.PHONY: infra infra-down infra-logs server site desktop test test-db e2e desktop-build clean
 
 # 一键开发栈：Postgres（docker）+ MinIO（本地二进制 :9000）
 infra:
@@ -13,6 +13,13 @@ infra-down-v:
 infra-logs:
 	docker compose -f deploy/docker-compose.yml logs -f
 
+# 一次性测试库（依赖 infra 的 Postgres；服务端集成测试经 TEST_DATABASE_URL 使用）
+test-db:
+	@docker exec onebrowser-postgres psql -U onebrowser -d postgres \
+		-c "DROP DATABASE IF EXISTS onebrowser_test;" \
+		-c "CREATE DATABASE onebrowser_test;"
+	@echo "测试库就绪: postgres://onebrowser:onebrowser@127.0.0.1:5432/onebrowser_test"
+
 # Go 服务端（默认连 localhost 的 compose 栈）
 server:
 	cd server && go run ./cmd/onesrv
@@ -25,8 +32,8 @@ site:
 desktop:
 	cd apps/desktop && pnpm dev
 
-test:
-	cd server && go test ./...
+test: test-db
+	cd server && TEST_DATABASE_URL="postgres://onebrowser:onebrowser@127.0.0.1:5432/onebrowser_test?sslmode=disable" go test ./...
 	cd test-site && go test ./...
 
 desktop-build:

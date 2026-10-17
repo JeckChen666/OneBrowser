@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -23,6 +24,10 @@ type Config struct {
 	EvictDeadline time.Duration // 驱逐宽限
 	HeartbeatTTL  time.Duration // 心跳失联判定
 	SweepInterval time.Duration
+
+	SnapshotRetention int           // 每环境保留的 ready 快照数（最新 N 个；0=不清理）
+	StaleUploadingTTL time.Duration // uploading 未 commit 的过期时长（残骸清扫）
+
 	PresignPutTTL time.Duration
 	PresignGetTTL time.Duration
 }
@@ -45,6 +50,10 @@ func Load() Config {
 		EvictDeadline: 15 * time.Second,
 		HeartbeatTTL:  30 * time.Second,
 		SweepInterval: 5 * time.Second,
+
+		SnapshotRetention: getenvInt("SNAPSHOT_RETENTION", 5),
+		StaleUploadingTTL: time.Duration(getenvInt("STALE_UPLOADING_HOURS", 24)) * time.Hour,
+
 		PresignPutTTL: 15 * time.Minute,
 		PresignGetTTL: 60 * time.Minute,
 	}
@@ -53,6 +62,15 @@ func Load() Config {
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func getenvInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
 	}
 	return def
 }

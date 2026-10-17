@@ -4,6 +4,7 @@ package s3s3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -77,6 +78,36 @@ func (c *Client) EnsureBucket(ctx context.Context) error {
 		return nil // 已由本账号持有或已存在
 	}
 	return err
+}
+
+// Delete 批量删除对象（保留策略用）。S3 批量删除对不存在的 key 也算成功（幂等）。
+func (c *Client) Delete(ctx context.Context, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	objs := make([]types.ObjectIdentifier, 0, len(keys))
+	for _, k := range keys {
+		objs = append(objs, types.ObjectIdentifier{Key: aws.String(k)})
+	}
+	out, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(c.bucket),
+		Delete: &types.Delete{Objects: objs},
+	})
+	if err != nil {
+		return err
+	}
+	if len(out.Errors) > 0 {
+		first := out.Errors[0]
+		key, msg := "", ""
+		if first.Key != nil {
+			key = *first.Key
+		}
+		if first.Message != nil {
+			msg = *first.Message
+		}
+		return fmt.Errorf("s3 delete %s: %s", key, msg)
+	}
+	return nil
 }
 
 func Keys(userID, envID, snapID string) (manifest, blob string) {

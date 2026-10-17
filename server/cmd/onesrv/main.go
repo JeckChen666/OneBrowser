@@ -59,6 +59,7 @@ func main() {
 	})
 
 	go leaseSvc.RunSweeper(ctx)
+	go snapSvc.RunStaleSweeper(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

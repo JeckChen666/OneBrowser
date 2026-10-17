@@ -2,8 +2,11 @@
 package snapshots
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -117,7 +120,147 @@ func (s *Service) Commit(w http.ResponseWriter, r *http.Request) {
 	if s.Notify != nil {
 		s.Notify(id.UserID, envID)
 	}
+	// 保留策略（best-effort，不阻塞 commit 响应）：清掉超出配额的旧 ready
+	// 与超时未 commit 的 uploading 残骸。刚晋升的基线始终受保护。
+	go func() {
+		pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		s.pruneEnv(pctx, id.UserID, envID, snapID)
+	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "promotedToBase": true})
+}
+
+// pruneEnv：快照保留策略。
+//  1. ready 只留最近 SnapshotRetention 个（0=不清理），protectID（当前基线）即使
+//     排在窗口外也不删；
+//  2. uploading 超过 StaleUploadingTTL 未 commit 的视为残骸（上传中断）。
+// 被清理的快照连同 S3 对象（manifest + blob）一起删除；S3 失败仅记日志（DB 已删，
+// 孤儿对象由存储生命周期策略兜底）。失败不返回错误——调用方均为 best-effort。
+func (s *Service) pruneEnv(ctx context.Context, userID, envID, protectID string) {
+	removed := s.deleteStaleUploading(ctx, userID, envID)
+	if s.Cfg.SnapshotRetention > 0 {
+		rows, err := s.DB.Pool.Query(ctx, `
+			WITH ranked AS (
+				SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) AS rn
+				FROM snapshots
+				WHERE env_id=$1 AND user_id=$2 AND state='ready'
+			)
+			SELECT id FROM ranked WHERE rn > $3 AND id <> $4`,
+			envID, userID, s.Cfg.SnapshotRetention, protectID)
+		if err != nil {
+			log.Printf("snapshot prune query: %v", err)
+			return
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				ids = append(ids, id)
+			}
+		}
+		rows.Close()
+		removed += s.deleteSnaps(ctx, userID, envID, ids)
+	}
+	if removed > 0 {
+		_, _ = s.DB.Pool.Exec(ctx,
+			`INSERT INTO audit_log (user_id, device_id, event, detail) VALUES ($1,'','snapshot.prune',$2)`,
+			userID, envID+"/"+strconv.Itoa(removed))
+		log.Printf("snapshot prune: env=%s removed=%d", envID, removed)
+	}
+}
+
+// deleteStaleUploading：清掉超时未 commit 的 uploading 残骸，返回删除数。
+func (s *Service) deleteStaleUploading(ctx context.Context, userID, envID string) int {
+	rows, err := s.DB.Pool.Query(ctx,
+		`DELETE FROM snapshots
+		 WHERE env_id=$1 AND user_id=$2 AND state='uploading'
+		   AND created_at < now() - make_interval(secs => $3)
+		 RETURNING id`,
+		envID, userID, s.Cfg.StaleUploadingTTL.Seconds())
+	if err != nil {
+		log.Printf("snapshot stale-upload delete: %v", err)
+		return 0
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	return s.deleteSnaps(ctx, userID, envID, ids)
+}
+
+// deleteSnaps：删 DB 行 + S3 对象（manifest/blob 可能从未上传，删除幂等）。
+func (s *Service) deleteSnaps(ctx context.Context, userID, envID string, ids []string) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	var keys []string
+	for _, snapID := range ids {
+		mk, bk := s3s3.Keys(userID, envID, snapID)
+		keys = append(keys, mk, bk)
+	}
+	if s.S3 != nil {
+		if err := s.S3.Delete(ctx, keys...); err != nil {
+			log.Printf("snapshot prune s3 delete: %v", err)
+		}
+	}
+	del, err := s.DB.Pool.Exec(ctx,
+		`DELETE FROM snapshots WHERE env_id=$1 AND user_id=$2 AND id = ANY($3)`,
+		envID, userID, ids)
+	if err != nil {
+		log.Printf("snapshot prune delete: %v", err)
+		return 0
+	}
+	return int(del.RowsAffected())
+}
+
+// RunStaleSweeper：周期清扫全库 uploading 残骸（commit 路径只清当前环境，
+// 被放弃的环境靠这里兜底）。SweepInterval 与租约清扫共用配置。
+func (s *Service) RunStaleSweeper(ctx context.Context) {
+	if s.Cfg.StaleUploadingTTL <= 0 {
+		return
+	}
+	t := time.NewTicker(s.Cfg.SweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			rows, err := s.DB.Pool.Query(ctx,
+				`DELETE FROM snapshots WHERE state='uploading'
+				   AND created_at < now() - make_interval(secs => $1)
+				 RETURNING id, env_id, user_id`,
+				s.Cfg.StaleUploadingTTL.Seconds())
+			if err != nil {
+				log.Printf("stale snapshot sweep: %v", err)
+				continue
+			}
+			type staleSnap struct{ id, env, user string }
+			var batch []staleSnap
+			for rows.Next() {
+				var sn staleSnap
+				if rows.Scan(&sn.id, &sn.env, &sn.user) == nil {
+					batch = append(batch, sn)
+				}
+			}
+			rows.Close()
+			for _, sn := range batch {
+				mk, bk := s3s3.Keys(sn.user, sn.env, sn.id)
+				if s.S3 != nil {
+					if err := s.S3.Delete(ctx, mk, bk); err != nil {
+						log.Printf("stale snapshot sweep s3: %v", err)
+					}
+				}
+			}
+			if len(batch) > 0 {
+				log.Printf("stale snapshot sweep: removed %d uploading rows", len(batch))
+			}
+		}
+	}
 }
 
 type baseResp struct {
