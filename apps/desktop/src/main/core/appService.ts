@@ -680,10 +680,13 @@ export class AppService {
         }
         throw new Error('该基线为文件级快照（L2），builtin 承载需先在内核设备重新保存基线以生成结构化副本')
       }
+      const t0 = Date.now()
       const tarBytes = openFiles(this.dek!, { manifest, blob })
       const dir = path.join(path.join(os.tmpdir(), 'ob-restore'), `${envId}-${randomBytes(4).toString('hex')}`)
-      await untarTo(Buffer.from(tarBytes), dir)
-      console.log(`[restore] L2 解包 ${dir}（tar.gz ${(blob.length / 1024 / 1024).toFixed(1)}MB）`)
+      await untarTo(Buffer.from(tarBytes), dir, manifest.payload.format)
+      console.log(
+        `[restore] L2 解包 ${dir}（${manifest.payload.format} ${(blob.length / 1024).toFixed(0)}KB，解密+解包 ${((Date.now() - t0) / 1000).toFixed(1)}s）`
+      )
       return { kind: 'files', dir, kernelVersion: manifest.kernel.version }
     }
 
@@ -732,7 +735,7 @@ export class AppService {
         console.warn('[upload] L1 兜底快照失败（继续 L2）:', e instanceof Error ? e.message : e)
       }
 
-      const tarBytes = await this.kernelHost.captureProfile(envId)
+      const packed = await this.kernelHost.captureProfile(envId)
       const sealed = await sealFiles({
         dek: this.dek!,
         kdf: this.kdf,
@@ -740,7 +743,8 @@ export class AppService {
         snapshotId: up.snapshotId,
         basedOn,
         deviceId: this.store.deviceId,
-        tarBytes,
+        tarBytes: packed.bytes,
+        format: packed.format,
         kernel: { version: this.kernelTag(), seed: env.seed }
       })
       const blob = new Uint8Array(sealed.blob)
@@ -749,6 +753,9 @@ export class AppService {
         this.cloud.putObject(up.upload.blobUrl, blob)
       ])
       await this.cloud.commitSnapshot(envId, up.snapshotId, sha256Hex(blob), blob.length)
+      console.log(
+        `[upload] L2 ${packed.format} ${(blob.length / 1024).toFixed(0)}KB（快照 ${up.snapshotId.slice(0, 8)}…）`
+      )
 
       if (l1SnapshotId && env.l1SnapshotId !== l1SnapshotId) {
         await this.rememberL1Snapshot(env, l1SnapshotId)

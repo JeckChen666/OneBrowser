@@ -18,7 +18,7 @@ export interface StructuredManifest {
   payload: { format: 'json'; encSha256: string; encSize: number }
 }
 
-/** L2 文件级快照：整个浏览器 profile 的 tar.gz 密文（docs/v0.3.0-plan.md） */
+/** L2 文件级快照：整个浏览器 profile 的 tar（zstd/gzip）密文（docs/v0.3.0-plan.md） */
 export interface FilesManifest {
   schema: 'onebrowser.snapshot/v1'
   kind: 'files'
@@ -29,7 +29,7 @@ export interface FilesManifest {
   deviceId: string
   platform: string
   cipher: { alg: 'AES-256-GCM'; kdf: 'argon2id'; kdfParams: KdfParamsJson; subkey: 'HKDF-SHA256(dek,purpose)' }
-  payload: { format: 'tar+gzip'; encSha256: string; encSize: number; rawSize: number }
+  payload: { format: 'tar+zstd' | 'tar+gzip'; encSha256: string; encSize: number; rawSize: number }
   /** 内核版本绑定：恢复时校验，不一致提示风险（profile 含 os_crypt 数据，跨构建不保证可解） */
   kernel: { version: string; seed: string }
 }
@@ -96,8 +96,10 @@ export interface SealFilesInput {
   snapshotId?: string
   basedOn: string | null
   deviceId: string
-  /** tar.gz 字节流（profile 打包产物） */
+  /** tar 字节流（profile 打包产物） */
   tarBytes: Uint8Array
+  /** 打包格式（随宿主压缩器可用性而定，解包侧自动探测） */
+  format: 'tar+zstd' | 'tar+gzip'
   kernel: { version: string; seed: string }
 }
 
@@ -119,7 +121,7 @@ export async function sealFiles(input: SealFilesInput): Promise<SealedFilesSnaps
     platform: `${process.platform}/${os.arch()}`,
     cipher: { alg: 'AES-256-GCM', kdf: 'argon2id', kdfParams: input.kdf, subkey: 'HKDF-SHA256(dek,purpose)' },
     payload: {
-      format: 'tar+gzip',
+      format: input.format,
       encSha256: sha256Hex(blob),
       encSize: blob.length,
       rawSize: input.tarBytes.length

@@ -252,17 +252,19 @@ export class ExternalKernelHost implements Host {
     return { cookies: (cookies || []).map(cdpCookieToSnap), localStorage: localStorageOut, origins }
   }
 
-  /** L2 抓取：冻结容器（docker pause）后在宿主侧打包整个 profile 目录 → tar.gz。
+  /** L2 抓取：冻结容器（docker pause）后在宿主侧打包整个 profile 目录（tar + zstd/gzip）。
    *  环境保持运行，用户无感。原生承载不支持（quiesce 为 no-op，一致性无保证）。 */
-  async captureProfile(envId: string): Promise<Buffer> {
+  async captureProfile(envId: string): Promise<{ bytes: Buffer; format: 'tar+zstd' | 'tar+gzip' }> {
     const re = this.running.get(envId)
     if (!re) throw new Error('环境未运行，无法抓取 profile')
     if (!re.launch.profileDir) throw new Error('该承载未暴露 profile 目录（原生内核 L2 暂不支持）')
     const dir = re.launch.profileDir
     const t0 = Date.now()
-    const buf = await re.launch.quiesce(() => tarDir(dir))
-    console.log(`[kernel] L2 抓取 ${dir}：tar.gz ${(buf.length / 1024 / 1024).toFixed(1)}MB（${((Date.now() - t0) / 1000).toFixed(1)}s，含冻结）`)
-    return buf
+    const packed = await re.launch.quiesce(() => tarDir(dir))
+    console.log(
+      `[kernel] L2 抓取 ${dir}：${packed.format} ${(packed.bytes.length / 1024).toFixed(0)}KB（${((Date.now() - t0) / 1000).toFixed(1)}s，含冻结）`
+    )
+    return packed
   }
 
   /** 优雅关闭（launcher.stop：Browser.close → 兜底强杀/删容器） */

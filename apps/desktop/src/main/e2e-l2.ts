@@ -176,9 +176,12 @@ export async function runE2EL2(): Promise<number> {
       new TextDecoder().decode(await svc.cloud.getObject(base.download.manifestUrl))
     ) as { kind: string; payload: { format: string; rawSize: number }; kernel?: { version: string; seed: string } }
     check(
-      'T-L2.2 基线为文件级（kind=files，tar+gzip，带内核版本/种子绑定）',
-      manifest.kind === 'files' && manifest.payload?.format === 'tar+gzip' && !!manifest.kernel?.version && manifest.kernel?.seed === '600000023',
-      `rawSize=${(manifest.payload?.rawSize / 1024 / 1024).toFixed(1)}MB kernel=${manifest.kernel?.version}`
+      'T-L2.2 基线为文件级（kind=files，tar+zstd/gzip，带内核版本/种子绑定）',
+      manifest.kind === 'files' &&
+        (manifest.payload?.format === 'tar+zstd' || manifest.payload?.format === 'tar+gzip') &&
+        !!manifest.kernel?.version &&
+        manifest.kernel?.seed === '600000023',
+      `format=${manifest.payload?.format} rawSize=${(manifest.payload?.rawSize / 1024).toFixed(0)}KB kernel=${manifest.kernel?.version}`
     )
 
     // ---- 第 2 轮：全新实例打开基线 → 三类数据读回（零结构化注入）----
