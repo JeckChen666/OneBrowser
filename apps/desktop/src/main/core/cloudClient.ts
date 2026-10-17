@@ -127,9 +127,29 @@ export class CloudClient {
     return this.req('POST', `/v1/envs/${envId}/snapshots`, { deviceId })
   }
 
+  /** 上传到预签名 URL。瞬时故障（5xx/429/网络层异常）按指数退避重试至多 3 次；
+   * 4xx 是确定性失败（签名/权限错误），重试无意义直接抛出。
+   * 预签名 PUT 幂等（同内容覆写），重发安全。 */
   async putObject(url: string, bytes: Uint8Array): Promise<void> {
-    const resp = await fetch(url, { method: 'PUT', body: Buffer.from(bytes) })
-    if (!resp.ok) throw new Error(`S3 PUT 失败: HTTP ${resp.status}`)
+    const body = Buffer.from(bytes)
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)))
+      let retryable = true
+      try {
+        const resp = await fetch(url, { method: 'PUT', body, signal: AbortSignal.timeout(60_000) })
+        if (resp.ok) return
+        lastErr = new Error(`S3 PUT 失败: HTTP ${resp.status}`)
+        if (resp.status < 500 && resp.status !== 429) {
+          retryable = false
+          throw lastErr
+        }
+      } catch (e) {
+        lastErr = e
+        if (!retryable) throw e // 4xx：立即失败
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(`S3 PUT 失败: ${String(lastErr)}`)
   }
 
   async getObject(url: string): Promise<Uint8Array> {
