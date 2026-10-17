@@ -1,8 +1,8 @@
 # OneBrowser
 
-> 指纹环境 + 登录态云端共享的浏览器（V0.2.0）
+> 指纹环境 + 登录态云端共享的浏览器（V0.3.0）
 >
-> 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md)
+> 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)
 
 ## ⚠️ 工作流约定（必读）
 
@@ -22,6 +22,8 @@
 桌面端 Electron（Vue3 + Element Plus），服务端 Go（chi + pgx + aws-sdk-go-v2），存储 S3 兼容（本地用 MinIO），元数据 Postgres。测试不依赖任何真实网站：内置 Go 编写的带登录态测试站。
 
 **V0.2.0 新增**：fingerprint-chromium 指纹内核承载（同 seed 跨设备指纹一致）、双承载互迁移（builtin ⇄ kernel 登录态无缝）、每环境代理（含认证）+ auto 时区/语言（按代理出口 geo 推导）、会话健康检查（基线失效提示）、服务端快照保留策略。
+
+**V0.3.0 新增**：**L2 文件级快照**——kernel 环境以整个浏览器 profile 为快照单位（cookie/IndexedDB/Service Worker/密码库等全部站点数据随基线漫游）；容器 profile 宿主直通（-v 挂载）+ 冻结一致性抓取（docker pause）；双写策略（L2 为主 + L1 结构化副本），builtin 设备自动回退 L1，跨承载互迁移不回退。
 
 ## 架构（数据面为 L1 结构化）
 
@@ -69,6 +71,7 @@ make e2e
 ```bash
 make test         # Go 单测 + DB/S3 集成测试（自动建一次性测试库 test-db）
 make e2e          # 全链路：模式一克隆 / 分支语义 / 互斥接管 / E2E 密文抽查 / 会话过期提示
+pnpm --dir apps/desktop e2e:l2        # L2 文件级快照（kernel 容器，需 Docker）
 pnpm --dir apps/desktop e2e:interop   # 双承载互迁移 + 混合接管（kernel 容器，需 Docker）
 pnpm --dir apps/desktop e2e:fp        # 指纹三件套 + 代理 + auto 时区（kernel 容器，需 Docker）
 pnpm --dir apps/desktop kernel-smoke  # 内核指纹冒烟（Docker）
@@ -78,7 +81,7 @@ pnpm --dir apps/desktop kernel-smoke  # 内核指纹冒烟（Docker）
 
 ## 已知限制（按规划，后续版本解决）
 
-- **数据面 L1**：只迁移 cookie + localStorage；IndexedDB / Service Worker / 密码库不在内（M6 文件级快照解决）。
+- **数据面 L1**：builtin 承载只迁移 cookie + localStorage（kernel 承载已升级 L2 文件级快照，全量站点数据随基线漫游）。
 - **内核分发**：fingerprint-chromium 官方预编译产物 mac 为 arm64-only；Intel mac 开发机经 Docker（Linux 内核）验证（`ONEBROWSER_KERNEL_DOCKER=1`）。
 - **指纹 seed**：必须为 1~2147483647 的整数（内核要求 32 位整数；非法值会使渲染进程死锁，客户端已强校验）。
 - **Google 站点**：受 DBSC（设备绑定会话）限制，Google 登录态无法跨设备共享——这是行业级硬限制，详见调研报告 §4.3。

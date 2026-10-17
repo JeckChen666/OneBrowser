@@ -47,9 +47,13 @@
             <div class="env-meta">{{ row.env.homepage || '（未设置主页）' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="云端基线" width="150">
+        <el-table-column label="云端基线" width="190">
           <template #default="{ row }">
-            <span v-if="row.hasBase">{{ formatTime(row.baseCreatedAt) }}</span>
+            <template v-if="row.hasBase">
+              <span>{{ formatTime(row.baseCreatedAt) }}</span>
+              <el-tag v-if="row.env.hosting === 'kernel'" size="small" type="warning" style="margin-left: 6px">文件级 L2</el-tag>
+              <el-tag v-else size="small" type="info" style="margin-left: 6px">结构化 L1</el-tag>
+            </template>
             <span v-else class="dim">无（首次登录后保存）</span>
           </template>
         </el-table-column>

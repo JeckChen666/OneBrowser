@@ -23,7 +23,22 @@ import {
   isValidSeed,
   type KdfParamsJson
 } from './e2e'
-import { seal, open, sealConfig, openConfig, manifestJson, blobBytes, type SealedSnapshot, type SnapshotPayload } from './snapshotEngine'
+import {
+  seal,
+  open as openStructured,
+  openFiles,
+  sealFiles,
+  sealConfig,
+  openConfig,
+  manifestJson,
+  blobBytes,
+  type SnapshotManifest,
+  type SealedSnapshot,
+  type SnapshotPayload
+} from './snapshotEngine'
+import { untarTo } from './profileArchive'
+import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import type {
   AppState,
   CreateEnvInput,
@@ -113,6 +128,13 @@ export class AppService {
   /** docker 内核模式（跳过原生内核就绪检查） */
   get kernelDockerMode(): boolean {
     return process.env.ONEBROWSER_KERNEL_DOCKER === '1'
+  }
+
+  /** L2 manifest 的内核构建标识：profile 含 os_crypt 数据，跨构建不保证可解 */
+  private kernelTag(): string {
+    return this.kernelDockerMode
+      ? `docker:${process.env.ONEBROWSER_KERNEL_IMAGE || 'onebrowser-kernel-smoke'}`
+      : `native:${this.kernelManager.status().version || 'unknown'}`
   }
 
   // ---------- 指纹解析（seed / auto(按代理出口 geo) / manual） ----------
@@ -317,6 +339,7 @@ export class AppService {
         fingerprint?: EnvConfig['fingerprint']
         kernelVersion?: string
         sessionCheck?: EnvConfig['sessionCheck']
+        l1SnapshotId?: string
       } = {}
       try {
         cfg = await openConfig<typeof cfg>(this.dek!, row.id, row.configEnc)
@@ -341,6 +364,7 @@ export class AppService {
         fingerprint: cfg.fingerprint,
         kernelVersion: cfg.kernelVersion,
         sessionCheck: cfg.sessionCheck,
+        l1SnapshotId: cfg.l1SnapshotId,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
       })
@@ -404,7 +428,8 @@ export class AppService {
       fingerprint: patch.fingerprint !== undefined ? patch.fingerprint : cur.fingerprint,
       // null=显式清除；undefined=不修改
       sessionCheck: patch.sessionCheck == null ? (patch.sessionCheck === null ? undefined : cur.sessionCheck) : patch.sessionCheck,
-      kernelVersion: cur.kernelVersion
+      kernelVersion: cur.kernelVersion,
+      l1SnapshotId: cur.l1SnapshotId
     })
     await this.cloud.updateEnv(id, {
       name: patch.name !== undefined ? patch.name : cur.name,
@@ -440,17 +465,28 @@ export class AppService {
     if (env.mode === 'snapshot') {
       this.setPhase(envId, 'opening')
       console.log(`[openEnv] ${envId} 下载基线…`)
-      const restore = await this.downloadBase(envId)
-      console.log(`[openEnv] ${envId} 打开（hosting=${env.hosting}, restore=${!!restore}）`)
+      const plan = await this.downloadBase(envId)
+      console.log(`[openEnv] ${envId} 打开（hosting=${env.hosting}, restore=${plan ? plan.kind : '首次'}）`)
+      if (plan?.kind === 'files') {
+        // L2：profile 已解包到 plan.dir，内核直接以它为 user-data-dir 启动；
+        // 叠加 L1 结构化注入补齐会话 cookie 与惰性刷盘的 localStorage（双写快照的副本）
+        const l1 = env.l1SnapshotId ? await this.fetchL1Payload(envId, env.l1SnapshotId) : null
+        await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint })
+        this.setPhase(envId, 'running', '已从云端基线克隆（文件级 L2）')
+        if (plan.kernelVersion !== this.kernelTag()) {
+          this.notify('warning', `「${env.name}」基线来自不同版本的内核，如登录态异常请重新登录并更新基线`)
+        }
+        if (env.sessionCheck) this.probeSession(env).catch(() => undefined)
+        return
+      }
+      const restore = plan?.kind === 'structured' ? plan.payload : null
       await host.open(env, { restore, hidden, fingerprint })
       this.setPhase(
         envId,
         'running',
         restore
           ? `已从云端基线克隆${env.hosting === 'kernel' ? '（指纹内核）' : ''}`
-          : env.hosting === 'kernel'
-            ? '首次打开：请登录后点击「保存为基线」'
-            : '首次打开：请登录后点击「保存为基线」'
+          : '首次打开：请登录后点击「保存为基线」'
       )
       if (restore && env.sessionCheck) this.probeSession(env).catch(() => undefined)
       return
@@ -464,10 +500,18 @@ export class AppService {
       outcome = await this.agent.waitGranted(envId, (outcome.deadlineMs || 15000) + 20000)
     }
     this.setPhase(envId, 'opening')
-    const restore = outcome.snapshotId
+    const plan = outcome.snapshotId
       ? await this.downloadSnapshot(envId, outcome.snapshotId)
       : await this.downloadBase(envId)
-    await host.open(env, { restore, hidden, fingerprint })
+    if (plan?.kind === 'files') {
+      const l1 = env.l1SnapshotId ? await this.fetchL1Payload(envId, env.l1SnapshotId) : null
+      await host.open(env, { restoreDir: plan.dir, restore: l1 || undefined, hidden, fingerprint })
+      if (plan.kernelVersion !== this.kernelTag()) {
+        this.notify('warning', `「${env.name}」基线来自不同版本的内核，如登录态异常请重新登录并更新基线`)
+      }
+    } else {
+      await host.open(env, { restore: plan?.kind === 'structured' ? plan.payload : null, hidden, fingerprint })
+    }
     this.agent.startHeartbeat(envId)
     this.setPhase(envId, 'running', outcome.stale ? '已接管（旧基线：对方设备未及时上传）' : '已接管')
     this.notify('success', `已打开互斥环境「${env.name}」`)
@@ -569,45 +613,151 @@ export class AppService {
 
   // ---------- 快照管道 ----------
 
-  private async downloadBase(envId: string): Promise<SnapshotPayload | null> {
+  private async downloadBase(envId: string): Promise<RestorePlan | null> {
     if (!this.logged_in) return null
     const base = await this.cloud.getBase(envId)
     if (!base.hasBase || !base.download || !base.snapshot) return null
-    return this.fetchAndOpen(envId, base.download.manifestUrl, base.download.blobUrl, base.snapshot.snapshotId)
+    return this.fetchRestore(envId, base.download.manifestUrl, base.download.blobUrl, base.snapshot.snapshotId)
   }
 
-  private async downloadSnapshot(envId: string, snapId: string): Promise<SnapshotPayload | null> {
+  private async downloadSnapshot(envId: string, snapId: string): Promise<RestorePlan | null> {
     const d = await this.cloud.getDownload(envId, snapId)
-    return this.fetchAndOpen(envId, d.download.manifestUrl, d.download.blobUrl, snapId)
+    return this.fetchRestore(envId, d.download.manifestUrl, d.download.blobUrl, snapId)
   }
 
-  private async fetchAndOpen(
+  /** 取 L1 兜底快照的结构化载荷（L2 恢复时叠加注入） */
+  private async fetchL1Payload(envId: string, snapshotId: string): Promise<SnapshotPayload | null> {
+    try {
+      const plan = await this.downloadSnapshot(envId, snapshotId)
+      return plan?.kind === 'structured' ? plan.payload : null
+    } catch (e) {
+      console.warn(`[restore] L1 兜底快照获取失败（仅用 L2）: ${e instanceof Error ? e.message : e}`)
+      return null
+    }
+  }
+
+  /** 把 L1 兜底快照 id 记入环境配置（E2E 密文），builtin 打开 L2 基线时回退用 */
+  private async rememberL1Snapshot(env: EnvConfig, snapshotId: string): Promise<void> {
+    try {
+      const cfgEnc = await sealConfig(this.dek!, env.id, {
+        hosting: env.hosting,
+        homepage: env.homepage,
+        seed: env.seed,
+        proxy: env.proxy,
+        fingerprint: env.fingerprint,
+        kernelVersion: env.kernelVersion,
+        sessionCheck: env.sessionCheck,
+        l1SnapshotId: snapshotId
+      })
+      await this.cloud.updateEnv(env.id, { configEnc: cfgEnc })
+      this.envs.set(env.id, { ...env, l1SnapshotId: snapshotId })
+    } catch (e) {
+      console.warn('[upload] l1SnapshotId 记录失败:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  private async fetchRestore(
     envId: string,
     manifestUrl: string,
     blobUrl: string,
     expectSnapId: string
-  ): Promise<SnapshotPayload> {
-    const [manifestBytes, blobB64bytes] = await Promise.all([
+  ): Promise<RestorePlan> {
+    const [manifestBytes, blob] = await Promise.all([
       this.cloud.getObject(manifestUrl),
       this.cloud.getObject(blobUrl)
     ])
-    const sealed: SealedSnapshot = {
-      manifest: JSON.parse(new TextDecoder().decode(manifestBytes)),
-      blobB64: Buffer.from(blobB64bytes).toString('base64')
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as SnapshotManifest
+    if (manifest.snapshotId !== expectSnapId) throw new Error('快照 ID 不匹配')
+
+    if (manifest.kind === 'files') {
+      const env = this.envs.get(envId)
+      // builtin（Electron partition）无法消费 profile 目录 → 回退到双写时的 L1 结构化快照
+      if (env && env.hosting !== 'kernel') {
+        if (env.l1SnapshotId) {
+          console.log(`[restore] builtin 打开 L2 基线 → 回退 L1 快照 ${env.l1SnapshotId.slice(0, 8)}…`)
+          const d = await this.cloud.getDownload(envId, env.l1SnapshotId)
+          return this.fetchRestore(envId, d.download.manifestUrl, d.download.blobUrl, env.l1SnapshotId)
+        }
+        throw new Error('该基线为文件级快照（L2），builtin 承载需先在内核设备重新保存基线以生成结构化副本')
+      }
+      const tarBytes = openFiles(this.dek!, { manifest, blob })
+      const dir = path.join(path.join(os.tmpdir(), 'ob-restore'), `${envId}-${randomBytes(4).toString('hex')}`)
+      await untarTo(Buffer.from(tarBytes), dir)
+      console.log(`[restore] L2 解包 ${dir}（tar.gz ${(blob.length / 1024 / 1024).toFixed(1)}MB）`)
+      return { kind: 'files', dir, kernelVersion: manifest.kernel.version }
     }
-    if (sealed.manifest.snapshotId !== expectSnapId) throw new Error('快照 ID 不匹配')
-    return open(this.dek!, sealed)
+
+    const sealed: SealedSnapshot = {
+      manifest,
+      blobB64: Buffer.from(blob).toString('base64')
+    }
+    return { kind: 'structured', payload: await openStructured(this.dek!, sealed) }
   }
 
-  /** 抓取运行中环境 → 加密 → 上传 → commit，返回 snapshotId */
+  /** 抓取运行中环境 → 加密 → 上传 → commit，返回 snapshotId。
+   *  kernel 承载走 L2 文件级（整 profile tar.gz，含 IndexedDB/SW/密码库）；
+   *  builtin 保持 L1 结构化（cookie + localStorage）。 */
   async uploadSnapshot(envId: string): Promise<string> {
     if (!this.logged_in) throw new Error('未登录')
     const env = this.envs.get(envId)
     if (!env) throw new Error('环境不存在')
-    const host = this.hostFor(env)
-    const data = await host.capture(envId)
     const basedOn = this.baseMetas.get(envId)?.snapshotId || null
     const up = await this.cloud.createUpload(envId, this.store.deviceId)
+
+    if (env.hosting === 'kernel') {
+      // 双写：L1 结构化快照先 commit（临时成为基线），L2 后 commit（最终基线）。
+      // builtin 设备打开 L2 基线时经 env.l1SnapshotId 回退到 L1（双承载互迁移不回退）。
+      // commit 顺序天然保证最终 latest_base_id=L2，服务端零改动。
+      let l1SnapshotId: string | undefined
+      try {
+        const data = await this.kernelHost.capture(envId)
+        const up1 = await this.cloud.createUpload(envId, this.store.deviceId)
+        const sealed1 = await seal({
+          dek: this.dek!,
+          kdf: this.kdf,
+          envId,
+          snapshotId: up1.snapshotId,
+          basedOn,
+          deviceId: this.store.deviceId,
+          payload: { ...data, env: { homepage: env.homepage } }
+        })
+        const blob1 = blobBytes(sealed1)
+        await Promise.all([
+          this.cloud.putObject(up1.upload.manifestUrl, manifestJson(sealed1.manifest)),
+          this.cloud.putObject(up1.upload.blobUrl, blob1)
+        ])
+        await this.cloud.commitSnapshot(envId, up1.snapshotId, sha256Hex(blob1), blob1.length)
+        l1SnapshotId = up1.snapshotId
+      } catch (e) {
+        console.warn('[upload] L1 兜底快照失败（继续 L2）:', e instanceof Error ? e.message : e)
+      }
+
+      const tarBytes = await this.kernelHost.captureProfile(envId)
+      const sealed = await sealFiles({
+        dek: this.dek!,
+        kdf: this.kdf,
+        envId,
+        snapshotId: up.snapshotId,
+        basedOn,
+        deviceId: this.store.deviceId,
+        tarBytes,
+        kernel: { version: this.kernelTag(), seed: env.seed }
+      })
+      const blob = new Uint8Array(sealed.blob)
+      await Promise.all([
+        this.cloud.putObject(up.upload.manifestUrl, manifestJson(sealed.manifest)),
+        this.cloud.putObject(up.upload.blobUrl, blob)
+      ])
+      await this.cloud.commitSnapshot(envId, up.snapshotId, sha256Hex(blob), blob.length)
+
+      if (l1SnapshotId && env.l1SnapshotId !== l1SnapshotId) {
+        await this.rememberL1Snapshot(env, l1SnapshotId)
+      }
+      return up.snapshotId
+    }
+
+    const host = this.hostFor(env)
+    const data = await host.capture(envId)
     const sealed = await seal({
       dek: this.dek!,
       kdf: this.kdf,
@@ -626,6 +776,11 @@ export class AppService {
     return up.snapshotId
   }
 }
+
+/** 恢复计划：L1 结构化载荷 / L2 已解包 profile 目录 */
+type RestorePlan =
+  | { kind: 'structured'; payload: SnapshotPayload }
+  | { kind: 'files'; dir: string; kernelVersion: string }
 
 function err(e: unknown): string {
   if (e instanceof ApiError) return `${e.code}`

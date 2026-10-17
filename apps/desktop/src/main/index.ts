@@ -10,6 +10,7 @@ const e2eMode =
   process.argv.includes('--e2e') ||
   process.argv.includes('--e2e-interop') ||
   process.argv.includes('--e2e-fp') ||
+  process.argv.includes('--e2e-l2') ||
   process.argv.includes('--kernel-smoke') ||
   process.argv.includes('--screenshot') ||
   process.argv.includes('--screenshot-loggedin')
@@ -128,6 +129,19 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--e2e')) {
     const { runE2E } = await import('./e2e-run')
     const code = await runE2E()
+    app.exit(code)
+    return
+  }
+
+  if (process.argv.includes('--e2e-l2')) {
+    process.env.ONEBROWSER_KERNEL_DOCKER = '1' // 必须在构造 AppService 前设置
+    const { runE2EL2 } = await import('./e2e-l2')
+    let code = 1
+    try {
+      code = await runE2EL2()
+    } catch (e) {
+      console.error('[l2-e2e] 异常终止:', e)
+    }
     app.exit(code)
     return
   }

@@ -8,6 +8,8 @@ import type { EnvConfig } from '@shared/types'
 
 export interface OpenOptions {
   restore?: StructuredData | null
+  /** L2 恢复：已解包的 profile 目录（宿主侧），kernel 承载直接作为 user-data-dir 使用 */
+  restoreDir?: string
   /** kernel 模式忽略（内核窗口自带 UI） */
   hidden?: boolean
   /** 指纹 flags（仅 kernel 模式） */

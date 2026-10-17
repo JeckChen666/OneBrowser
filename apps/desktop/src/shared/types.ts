@@ -38,6 +38,8 @@ export interface EnvConfig {
   /** 会话健康检查（可选）：打开快照环境恢复登录态后，按此探测基线是否仍有效；
    * 响应体不含 loggedInMarker 时提示「基线失效，请重新登录并更新基线」 */
   sessionCheck?: { urlPath: string; loggedInMarker: string }
+  /** L1 兜底快照 ID（kernel 环境双写时的结构化副本）：builtin 设备打开 L2 基线时回退使用 */
+  l1SnapshotId?: string
   createdAt: string
   updatedAt: string
 }

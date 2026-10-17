@@ -8,6 +8,7 @@ import type { KernelLauncher } from './kernelLauncher'
 import type { EnvConfig } from '@shared/types'
 import type { Host, KernelRunningEnv, OpenOptions, RunningEnv } from './host'
 import { attachPage, CdpConnection, closeTab, newTab } from './cdp'  // CdpConnection 用于临时标签页（不跨进程切换，页面级 ws 安全）
+import { tarDir } from './profileArchive'
 import type { StructuredData } from './dataPlane'
 
 /** Electron Cookie 形状（快照内） ↔ CDP cookie 映射（docker 冒烟亦复用） */
@@ -69,7 +70,9 @@ export class ExternalKernelHost implements Host {
     if (this.running.has(env.id)) throw new Error('环境已在运行中')
     const runToken = randomId()
     // 无空格、浅层路径：容器内内核对深层/含空格 user-data-dir 存在 CDP 挂死问题（S3 排障）
-    const userDataDir = path.join(app.getPath('temp'), 'ob-kp', `${env.id}-${runToken}`)
+    // L2 恢复时直接复用已解包的 profile 目录（restoreDir）——数据已在其中，无需注入
+    const userDataDir =
+      opts.restoreDir || path.join(app.getPath('temp'), 'ob-kp', `${env.id}-${runToken}`)
     fs.mkdirSync(userDataDir, { recursive: true })
 
     // 初始页直接为目标站点：规避「attach 后 Page.navigate + 代理」组合导致的渲染器挂起
@@ -112,6 +115,9 @@ export class ExternalKernelHost implements Host {
           /* ignore */
         }
         this.onClosed?.(env.id)
+        // per-run profile 目录随环境关闭清理（快照上传均发生在关闭前，分支语义=关闭即弃）
+        const dir = re.launch.profileDir
+        if (dir) fs.rm(dir, { recursive: true, force: true }, () => undefined)
       }
     }
     const launch = await this.launcher.launch(args, handleExit)
@@ -159,7 +165,9 @@ export class ExternalKernelHost implements Host {
       this.running.set(env.id, re)
       if (pendingExit) handleExit() // launch 期间已收到退出通知
 
-      // 注入登录态（cookie 直写；localStorage 用临时标签页逐 origin 注入）
+      // 结构化注入：L1 恢复（restore 单独使用）；L2 恢复时叠加（restoreDir + restore 并用）——
+      // 会话 cookie 不落盘（快照 tar 里没有）、LevelDB 惰性刷盘也可能滞后，
+      // 双写快照的 L1 副本恰好补齐这两类数据
       if (opts.restore) {
         await this.restoreData(re, opts.restore, launch.port)
       }
@@ -222,6 +230,7 @@ export class ExternalKernelHost implements Host {
     if (!re) throw new Error('环境未运行，无法抓取')
     const { cookies } = await re.page.send('Storage.getCookies', {})
     const origins = [...re.origins]
+    console.log(`[kernel] capture origins=${JSON.stringify(origins)} cookies=${(cookies || []).length}`)
     const localStorageOut: Record<string, Record<string, string>> = {}
     for (const origin of origins) {
       const tab = await newTab(re.port, origin + '/')
@@ -241,6 +250,19 @@ export class ExternalKernelHost implements Host {
       }
     }
     return { cookies: (cookies || []).map(cdpCookieToSnap), localStorage: localStorageOut, origins }
+  }
+
+  /** L2 抓取：冻结容器（docker pause）后在宿主侧打包整个 profile 目录 → tar.gz。
+   *  环境保持运行，用户无感。原生承载不支持（quiesce 为 no-op，一致性无保证）。 */
+  async captureProfile(envId: string): Promise<Buffer> {
+    const re = this.running.get(envId)
+    if (!re) throw new Error('环境未运行，无法抓取 profile')
+    if (!re.launch.profileDir) throw new Error('该承载未暴露 profile 目录（原生内核 L2 暂不支持）')
+    const dir = re.launch.profileDir
+    const t0 = Date.now()
+    const buf = await re.launch.quiesce(() => tarDir(dir))
+    console.log(`[kernel] L2 抓取 ${dir}：tar.gz ${(buf.length / 1024 / 1024).toFixed(1)}MB（${((Date.now() - t0) / 1000).toFixed(1)}s，含冻结）`)
+    return buf
   }
 
   /** 优雅关闭（launcher.stop：Browser.close → 兜底强杀/删容器） */

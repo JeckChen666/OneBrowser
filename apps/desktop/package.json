@@ -14,7 +14,8 @@
     "e2e:run": "electron . --e2e",
     "e2e:interop": "electron-vite build && electron . --e2e-interop",
     "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker",
-    "e2e:fp": "electron-vite build && electron . --e2e-fp"
+    "e2e:fp": "electron-vite build && electron . --e2e-fp",
+    "e2e:l2": "electron-vite build && electron . --e2e-l2"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

@@ -175,7 +175,16 @@ export async function newTab(port: number, url: string): Promise<CdpTarget> {
     method: 'PUT',
     signal: AbortSignal.timeout(8000)
   })
-  return (await resp.json()) as CdpTarget
+  const tab = (await resp.json()) as CdpTarget
+  // 等标签页真正到达目标 URL 再返回：立即 evaluate 会落在 about:blank 的
+  // 空上下文上（LS 读写全丢，且无任何报错——V0.3.0 排障）
+  const deadline = Date.now() + 8000
+  while (Date.now() < deadline) {
+    const t = (await listTargets(port).catch(() => [] as CdpTarget[])).find((x) => x.id === tab.id)
+    if (t && t.url === url) return t
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  return tab // 超时就原样返回，让调用方的 evaluate 自行暴露问题
 }
 
 export async function closeTab(port: number, targetId: string): Promise<void> {

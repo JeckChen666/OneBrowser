@@ -8,7 +8,7 @@ import { AppService } from './core/appService'
 import { CloudClient } from './core/cloudClient'
 import { LeaseAgent } from './core/leaseAgent'
 import { deriveAuthKey, deriveKEK, unwrapDEK } from './core/e2e'
-import { open as openSnapshot } from './core/snapshotEngine'
+import { open as openSnapshot, openConfig } from './core/snapshotEngine'
 import { restoreCookies, restoreLocalStorage } from './core/dataPlane'
 import { ensureDockerImage } from './kernel-smoke'
 import type { CanSend } from './core/cdp'
@@ -239,14 +239,24 @@ export async function runE2EInterop(): Promise<number> {
   await waitClosed(svc, env2)
   check('T3k.4 A(kernel) 已被强制关闭', !svc.kernelHost.isRunning(env2))
 
-  // B 下载快照恢复
-  const dl = await cloudB.getDownload(env2, granted.snapshotId!)
-  const [manifestBytes, blobBytes] = await Promise.all([
-    cloudB.getObject(dl.download.manifestUrl),
-    cloudB.getObject(dl.download.blobUrl)
-  ])
+  // B 下载快照恢复。kernel 环境的快照是 L2 文件级（双写，基线指向 L2）：
+  // builtin 设备经环境配置里的 l1SnapshotId 回退到结构化副本（产品 openEnv 同款路径）
+  let dl = await cloudB.getDownload(env2, granted.snapshotId!)
+  let manifestBytes = await cloudB.getObject(dl.download.manifestUrl)
+  let manifest0 = JSON.parse(new TextDecoder().decode(manifestBytes))
+  if (manifest0.kind === 'files') {
+    const { envs: rowsB } = await cloudB.listEnvs()
+    const rowB = rowsB.find((e: { id: string }) => e.id === env2)
+    if (!rowB) throw new Error('B 侧未找到环境配置')
+    const cfgB = await openConfig<{ l1SnapshotId?: string }>(dekB, env2, rowB.configEnc)
+    check('T3k.4b L2 快照双写存在 L1 兜底副本', !!cfgB.l1SnapshotId, `l1=${cfgB.l1SnapshotId?.slice(0, 8)}…`)
+    dl = await cloudB.getDownload(env2, cfgB.l1SnapshotId!)
+    manifestBytes = await cloudB.getObject(dl.download.manifestUrl)
+    manifest0 = JSON.parse(new TextDecoder().decode(manifestBytes))
+  }
+  const blobBytes = await cloudB.getObject(dl.download.blobUrl)
   const payload = await openSnapshot(dekB, {
-    manifest: JSON.parse(new TextDecoder().decode(manifestBytes)),
+    manifest: manifest0,
     blobB64: Buffer.from(blobBytes).toString('base64')
   })
   const sesB = session.fromPartition('interop-device-b')
