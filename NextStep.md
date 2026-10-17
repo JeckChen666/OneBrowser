@@ -14,6 +14,7 @@
 
 ## 当前状态（快照，2026-10-17）
 
+- **V0.4-A 准备件 + V0.4-C 生产硬化已完成**：os_crypt 注入补丁（148 精确 diff）+ 构建脚本；限流/配额/深度健康检查 + 生产 compose（Caddy TLS）+ production.md；全量回归限流下全绿
 - **V0.4-B mac 安装包已完成**：electron-builder 双架构 dmg（x64 144MB / arm64 140MB，ad-hoc 签名，不带内核首用下载）；**安装包内 app 实测 builtin e2e 17/17 + UI 截图冒烟通过**（asar/CJS preload/依赖收集全对）；`make dist-mac`
 - **V0.3.1 已完成**：L2 快照 zstd 压缩（36KB vs gzip 50KB）+ 观测日志；修复 macOS bsdtar 流式 zstd 两大坑（stdout 静默截断 / stdin fork 失败 → 临时文件中转）；回归 l2 7/7 · interop 13/13
 - **V0.4 规划已出**（`docs/v0.4.0-plan.md`）：原生内核 + os_crypt 补丁（148 源码先行）/ 安装包分发 / 生产硬化；builtin L2 评估结论=不做（L1 回退已闭环）
@@ -28,12 +29,13 @@
 
 ## 下一步（按优先级，V0.4 执行）
 
-1. **V0.4-A 内核补丁 PoC**：基于 fingerprint-chromium **148 源码分支**（150 源码未放）构建 mac 产物 + os_crypt 注入补丁（DEK 派生密钥）+ 漫游 PoC；磁盘/耗时预算见计划 §1/§6。
-2. **V0.4-C 生产硬化**：compose 生产栈 + Caddy TLS + 限流/配额 + 备份演练 + `deploy/production.md`。
-3. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
+1. **V0.4-A 内核补丁 PoC 收尾**：源码 tarball 已在 `/Users/macos/Code/ob-kernel-build/build/download_cache` 后台下载中（约 1.5G+，完成后跑 `scripts/kernel-build/bootstrap.sh` 的步骤 2–4 → `build-mac.sh`，8 核 6–12h）→ 产物跑 `os-crypt-roaming-poc` 验证（同 `--os-crypt-key` 双 profile 拷贝互解）→ 产品侧接线（DEK→HKDF 派生密钥注入 launcher）。
+2. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
+3. **V0.5 规划**：增量快照、自动更新（electron-updater）、团队协作。
 
 ## 已完成归档
 
+- **[2026-10-17] V0.4-A 准备 + V0.4-C（生产硬化）**：os-crypt-key 补丁（mac/linux 双端）+ bootstrap/build 脚本 + KI-1 源码级实锤；ratelimit（令牌桶+429）+ USER_QUOTA_GB + health?deep + deploy 生产栈与 production.md。
 - **[2026-10-17] V0.4-B mac（安装包）**：electron-builder.yml + dist:mac/dist 脚本 + pnpm allowBuilds（electron-winstaller=false）；dmg 双架构构建与包内 e2e 验收。
 - **[2026-10-17] V0.3.1（zstd + 观测）**：tar+zstd（gzip 兜底）+ format 入 manifest + 临时文件中转规避 bsdtar 流式缺陷 + 排除表补 Dawn 缓存 + 体积/耗时日志。
 - **[2026-10-17] V0.3.0（L2 文件级快照）**：snapshotEngine kind=files 二进制信封；Docker 挂载直通 + docker pause 冻结抓取；双写（L2 基线 + L1 副本入环境配置）与 builtin 回退；L2 恢复叠加 L1 注入补会话 cookie；修复 newTab 时序竞态（evaluate 落 about:blank 空上下文）；e2e:l2 7/7。
