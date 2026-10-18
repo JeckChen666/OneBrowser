@@ -51,8 +51,14 @@ autoninja -C out/OneBrowser chrome            # 8 核 6–12h
 产物用于：1) `os-crypt-roaming-poc`（同 `--os-crypt-key` 双 profile 拷贝互解）；
 2) kernelManager 本地内核路径跑全套 kernel e2e；3) arm64 包（--args target_cpu="arm64"）。
 
-**坑备忘**：gclient runhooks 要求 git 仓库（tarball 不行，hook 需手动跑）；
-`.gclient` 的 solution name 必须匹配实际相对路径（`build/src`）。
+**坑备忘**（全部实测踩过）：
+1. gclient runhooks 要求 git 仓库（tarball 不行，hook 手动跑：clang 用
+   `update.py`、rust 用 `build_rust.py`，均以系统 python3 直跑——vpython3 会
+   拉私有 Python 源，且 `--entire-toolchain` 下 rust 需自编译 2–4h）；
+2. **域名替换必须排除 tools/ 与 build/**（bootstrap 已内置）：否则 clang/CIPD/
+   rust stage0 下载走镜像域 SSL 必挂；手动反向还原极易把 `.com` 弄丢
+   （appspot.com 整体被替换为 8pp2p8t.qjz9zk）；
+3. lite 包不带 gn，需 `tools/gn/bootstrap/bootstrap.py` 自举后拷入 buildtools/mac/。
 
 ## 备注
 

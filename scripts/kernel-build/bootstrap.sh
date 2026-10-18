@@ -22,9 +22,13 @@ mkdir -p "$WORK/build/download_cache"
 ./utils/downloads.py unpack  -c "$WORK/build/download_cache" -i downloads.ini -- "$WORK/build/src"
 
 # 3) 剪除二进制 → 应用 ungoogled/fingerprint 补丁 → 域名替换
+#    关键：tools/ 与 build/ 必须排除在域名替换之外——它们要在构建期访问真实
+#    Google 域下载工具链（clang/CIPD/rust stage0）；替换后 SSL 必挂
+#    （V0.4-A 实测两次踩坑：clang 下载域与 CIPD 域）
 ./utils/prune_binaries.py "$WORK/build/src" pruning.list
 ./utils/patches.py apply "$WORK/build/src" patches
-./utils/domain_substitution.py apply -r domain_regex.list -f domain_substitution.list \
+grep -vE "^(tools/|build/)" domain_substitution.list > domain_substitution.build.list
+./utils/domain_substitution.py apply -r domain_regex.list -f domain_substitution.build.list \
   -c "$WORK/build/domsubcache.tar.gz" "$WORK/build/src"
 
 # 4) OneBrowser 补丁（os_crypt 密钥注入）
