@@ -2,6 +2,10 @@
 
 > 指纹环境 + 登录态云端共享的浏览器（V0.3.0）
 >
+> ![status](https://img.shields.io/badge/status-active--development-green) ![license](https://img.shields.io/badge/license-MIT-blue) ![e2e](https://img.shields.io/badge/e2e-64%2F64%20green-brightgreen)
+>
+> **注意**：本项目处于快速迭代期（当前 V0.4），API 与快照格式可能变化；生产部署前请阅读已知限制。
+>
 > 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md) · Windows 迁移：[docs/windows-migration.md](docs/windows-migration.md)
 
 ## ⚠️ 工作流约定（必读）
