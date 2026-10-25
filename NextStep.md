@@ -12,7 +12,10 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-17）
+## 当前状态（快照，2026-10-25）
+
+- **V0.4-A 构建现场（网络大坑已排平，全链路看护中）**：机器 10-24 前后重启杀过流水线；本周排掉三个连环坑——①googlesource/GitHub 需走系统代理（127.0.0.1:7897，构建命令须显式注入）；②rust-src 与 llvm monorepo 的 googlesource 镜像不可达，build_rust.py/build.py 的 GIT_URL 已改 GitHub 官方源；③chromium 专属 llvm tag（llvmorg-23-init-5669-g8a0be0bc）在 GitHub 无同名 tag，已手动造 tag 指向同 commit（8a0be0bc3772…）实现复用。**当前：rust 工具链 LLVM 编译中（14:27 起）**，看护脚本自动接力 gn gen→autoninja（/tmp/ob-pipeline.log）；补丁代码未动，PoC 等产物。
+- **V0.3.1 已完成**
 
 - **V0.4-A 准备件 + V0.4-C 生产硬化已完成**：os_crypt 注入补丁（148 精确 diff）+ 构建脚本；限流/配额/深度健康检查 + 生产 compose（Caddy TLS）+ production.md；全量回归限流下全绿
 - **V0.4-B mac 安装包已完成**：electron-builder 双架构 dmg（x64 144MB / arm64 140MB，ad-hoc 签名，不带内核首用下载）；**安装包内 app 实测 builtin e2e 17/17 + UI 截图冒烟通过**（asar/CJS preload/依赖收集全对）；`make dist-mac`
@@ -29,7 +32,7 @@
 
 ## 下一步（按优先级，V0.4 执行）
 
-1. **V0.4-A 内核构建接力**（现场与坑备忘见 `scripts/kernel-build/README.md`）：bootstrap 全链路已过（补丁 apply 实测 ✓）、clang ✓、gn 自举 ✓、产品侧 DEK→os-crypt 接线 ✓（flag 实参已验证）；**rust 工具链构建后台进行中**（/tmp/ob-rust.log，2–4h）→ 完成后 `gn gen` + `autoninja … chrome`（6–12h）→ `os-crypt-roaming-poc` 验证。
+1. **V0.4-A 内核构建接力**：看 `/tmp/ob-pipeline.log`（看护自动 gn gen→autoninja）。rust 工具链编译中→autoninja chrome（6–12h）→ 产物 `Chromium.app` 跑 `os-crypt-roaming-poc`（同 `--os-crypt-key` 双 profile 拷贝互解）→ 通过后 V0.4 发版。网络类失败排查顺序：代理环境变量 → GIT_URL（GitHub）→ llvm tag（造 tag 指向 commit）。
 2. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 3. **V0.5 规划**：增量快照、自动更新（electron-updater）、团队协作。
 
