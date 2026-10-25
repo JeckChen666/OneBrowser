@@ -2,7 +2,7 @@
 
 > 指纹环境 + 登录态云端共享的浏览器（V0.3.0）
 >
-> 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)
+> 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md) · Windows 迁移：[docs/windows-migration.md](docs/windows-migration.md)
 
 ## ⚠️ 工作流约定（必读）
 
@@ -50,7 +50,7 @@ S3：u/<uid>/envs/<envId>/snapshots/<snapId>/{manifest.json, blob.enc}   ← 全
 
 ## 快速开始
 
-前置：Go ≥1.26、Node ≥22 / pnpm ≥11、Docker（跑 Postgres）、MinIO（`brew install minio` 或任意 S3 兼容服务）。
+前置：Go ≥1.26、Node ≥22 / pnpm ≥11、Docker（跑 Postgres）、MinIO（任意 S3 兼容服务；Windows/Docker 路径见 [docs/windows-migration.md](docs/windows-migration.md)）。
 
 ```bash
 make infra        # Postgres（docker）+ MinIO（:9000，console :9001）

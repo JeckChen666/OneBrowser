@@ -12,8 +12,11 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-25）
+## 当前状态（快照，2026-10-25，开发机迁移 Windows）
 
+- **平台策略变更**：mac(Intel) 编译 Chromium 太慢（前台占用 1.5–2 天），开发切到 Windows——**Windows 有官方预编译内核（x64 zip/exe），W1 零编译即可跑通**；kernelManager 已补 win 解压分支（typecheck 过，待 Windows 实测）。
+- **mac 构建现场已存档**：`/Users/macos/Code/ob-kernel-build/` 停在 [2500/42722]（工具链+增量缓存全在，`ninja -C out/OneBrowser chrome` 可续）；九个构建坑全部记录在 `scripts/kernel-build/README.md`。
+- **V0.4 进度**：B（mac 安装包）✅ C（生产硬化）✅；A 的 mac/linux 补丁+产品接线 ✅，win 端补丁与三端自建内核转 Windows 继续（W2–W4）。
 - **V0.4-A 构建现场（网络大坑已排平，全链路看护中）**：机器 10-24 前后重启杀过流水线；本周排掉三个连环坑——①googlesource/GitHub 需走系统代理（127.0.0.1:7897，构建命令须显式注入）；②rust-src 与 llvm monorepo 的 googlesource 镜像不可达，build_rust.py/build.py 的 GIT_URL 已改 GitHub 官方源；③chromium 专属 llvm tag（llvmorg-23-init-5669-g8a0be0bc）在 GitHub 无同名 tag，已手动造 tag 指向同 commit（8a0be0bc3772…）实现复用。**当前：rust 工具链 LLVM 编译中（14:27 起）**，看护脚本自动接力 gn gen→autoninja（/tmp/ob-pipeline.log）；补丁代码未动，PoC 等产物。
 - **V0.3.1 已完成**
 
@@ -30,9 +33,13 @@
 - **运行环境**：server(:8787) / test-site(:18080) / Postgres(docker) / MinIO(:9000) 本机常驻
 - **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；镜像 `onebrowser-kernel-smoke`）
 
-## 下一步（按优先级，V0.4 执行）
+## 下一步（按优先级，Windows 开发机；迁移指南 docs/windows-migration.md）
 
-1. **V0.4-A 内核构建接力**：看 `/tmp/ob-pipeline.log`（看护自动 gn gen→autoninja）。rust 工具链编译中→autoninja chrome（6–12h）→ 产物 `Chromium.app` 跑 `os-crypt-roaming-poc`（同 `--os-crypt-key` 双 profile 拷贝互解）→ 通过后 V0.4 发版。网络类失败排查顺序：代理环境变量 → GIT_URL（GitHub）→ llvm tag（造 tag 指向 commit）。
+1. **W1 Windows 环境搭建 + 官方 win 内核跑通全链路**（零编译）：按迁移文档装 Node/pnpm/Go/Docker Desktop；MinIO 用 mcr 镜像；防火墙放行后跑 kernel-smoke/指纹 e2e——验证 kernelManager 新补的 win zip/exe 解压分支。通过即可打 tag `v0.4.0-win-prepared`（或直接 v0.4.0，W1 起官方内核已是产品可用形态）。
+2. **W2 win 端 os_crypt 补丁**：`os_crypt_win.cc`（DPAPI 路径）加 `--os-crypt-key`，与 mac/linux 补丁（`scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch`）同构；基于 148 源码 `components/os_crypt/win/`。
+3. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：打齐三端补丁；mac x64 产物顺便在 CI 出。
+4. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台 → V0.4 正式发版。
+5. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
 2. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 3. **V0.5 规划**：增量快照、自动更新（electron-updater）、团队协作。
 

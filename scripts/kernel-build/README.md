@@ -30,7 +30,15 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
 - [ ] mac 构建产物 + os-crypt-roaming PoC 通过（双 profile 拷贝互解）
       ——构建进行中/待续：`ob-kernel-build` 目录，见下「构建现场」
 
-## 构建现场（2026-10-18 起，进度）
+## Windows 路线（2026-10-25 起，主线转 Windows）
+
+**Windows 开发不需要本仓库的构建流程**——官方 Releases 有 win x64 预编译内核
+（`windows_x64.zip`），kernelManager 直接下载。本目录流程仅当需要**自带 os_crypt
+补丁的自建内核**时使用，且 Windows 本机构建用 VS Build Tools（官方支持），
+mac/Linux 走 WSL2 或 CI。win 端补丁（os_crypt_win.cc 的 DPAPI 路径）尚未写——
+参照 100-os-crypt-key.patch 的 mac/linux 写法在 `components/os_crypt/win/` 实现。
+
+## 构建现场（2026-10-18 起，进度；10-25 已暂停存档）
 
 工作目录 `/Users/macos/Code/ob-kernel-build/`：`fp-chromium`（148 补丁仓库）、
 `build/src`（126 上游补丁 + OneBrowser 补丁全部应用，7.5GB）、`depot_tools`、

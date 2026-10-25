@@ -165,6 +165,44 @@ async function extract(assetName: string, archive: string, version: string): Pro
     throw new Error('解压后未找到内核可执行文件（linux）')
   }
 
+  if (/windows_x64\.zip$/i.test(assetName)) {
+    // Windows 便携版 zip：用 PowerShell Expand-Archive（系统自带，无第三方依赖）
+    const psScript = `Expand-Archive -LiteralPath '${archive.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`
+    await execFileP('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript])
+    // 目录内找 chrome.exe（ungoogled 结构：顶层或 chrome-win/chrome.exe）
+    for (const c of ['chrome.exe', 'ungoogled-chromium.exe', 'chrome-win/chrome.exe']) {
+      const p = path.join(dest, c)
+      if (fs.existsSync(p)) return p
+    }
+    // 兜底：递归找首个 chrome.exe
+    const findExe = (dir: string): string | null => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) {
+          const hit = findExe(full)
+          if (hit) return hit
+        } else if (/^chrome.*\.exe$/i.test(e.name)) return full
+      }
+      return null
+    }
+    const found = findExe(dest)
+    if (found) return found
+    throw new Error('解压后未找到 chrome.exe（win）')
+  }
+
+  if (/_x64\.exe$/i.test(assetName)) {
+    // Windows 安装器：/dir 静默解包（ungoogled 用 Inno Setup，7z 也可解但不可控），
+    // 优先级最低（pickAsset 已优先 zip）；此分支仅在无 zip 的版本触发
+    const exeDir = path.join(dest, 'installed')
+    fs.mkdirSync(exeDir, { recursive: true })
+    await execFileP(archive, ['/SP-', '/SILENT', '/SUPPRESSMSGBOXES', `/DIR=${exeDir}`], { timeout: 10 * 60000 })
+    for (const c of ['chrome.exe', 'ungoogled-chromium.exe', 'chrome-win/chrome.exe']) {
+      const p = path.join(exeDir, c)
+      if (fs.existsSync(p)) return p
+    }
+    throw new Error('安装器执行后未找到 chrome.exe（win）')
+  }
+
   if (/\.zip$/i.test(assetName)) {
     await execFileP('unzip', ['-q', archive, '-d', dest])
     const exe = process.platform === 'win32' ? 'chrome.exe' : 'chrome'
