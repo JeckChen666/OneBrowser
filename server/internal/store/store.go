@@ -66,6 +66,24 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// 事务级迁移锁 + 锁内复查：`go test ./...` 的多个测试二进制并行共享测试库，
+		// check-then-apply 有竞态——两个进程同时通过外层检查、同时 apply，后者撞
+		// pg_type 唯一键（CREATE TABLE 的行类型冲突，Windows 慢机上必现）。
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('onebrowser:migrate'))`); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		var applied bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if applied {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, err := tx.Exec(ctx, string(sql)); err != nil {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("apply %s: %w", name, err)

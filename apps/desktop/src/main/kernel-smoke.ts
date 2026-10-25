@@ -13,6 +13,7 @@ import type { CanSend } from './core/cdp'
 import { attachPage, waitEndpoint } from './core/cdp'
 import { execFile as execFileCb } from 'node:child_process'
 import { promisify } from 'node:util'
+import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
@@ -21,7 +22,17 @@ import type { EnvConfig } from '@shared/types'
 
 const execFileP = promisify(execFileCb)
 
-const SITE = process.env.ONEBROWSER_SITE || 'http://127.0.0.1:18080'
+/** 宿主机局域网 IP：Docker 内核在容器内访问宿主测试站（127.0.0.1 容器内不可达） */
+function lanIp(): string {
+  for (const nets of Object.values(os.networkInterfaces())) {
+    for (const n of nets || []) {
+      if (n.family === 'IPv4' && !n.internal) return n.address
+    }
+  }
+  return '127.0.0.1'
+}
+
+const SITE = process.env.ONEBROWSER_SITE || `http://${lanIp()}:18080`
 
 let pass = 0
 let fail = 0
@@ -148,13 +159,40 @@ function dockerDir(): string {
 export async function ensureDockerImage(): Promise<void> {
   const dir = dockerDir()
   if (!fs.existsSync(path.join(dir, 'entrypoint.sh'))) throw new Error(`未找到 ${dir}`)
-  const bin = await execFileP('find', [path.join(dir, 'kernel'), '-type', 'f', '(', '-name', 'chrome', '-o', '-name', 'chromium', ')']).catch(() => ({ stdout: '' }))
-  if (!bin.stdout.trim()) {
+  // 镜像已存在则直接复用：docker build 每次都要上传 ~500MB 构建上下文（Windows 命名管道
+  // 下实测 10 分钟以上），每个 kernel e2e 都会调本函数，无条件重建不可接受。
+  // 更换内核版本（fetch.sh 的 VERSION）属显式操作：docker rmi 后重跑即重建。
+  const have = await execFileP('docker', ['image', 'inspect', IMAGE]).then(
+    () => true,
+    () => false
+  )
+  if (have) {
+    log(`复用已有镜像 ${IMAGE}`)
+    return
+  }
+  const kernelBin = findKernelBin(path.join(dir, 'kernel'))
+  if (!kernelBin) {
     log('拉取 Linux x64 内核产物（fetch.sh）…')
     await execFileP('bash', [path.join(dir, 'fetch.sh')], { timeout: 15 * 60000 })
   }
-  log('构建/复用 Docker 镜像…')
+  log('构建 Docker 镜像…')
   await execFileP('docker', ['build', '-q', '-t', IMAGE, dir], { timeout: 10 * 60000 })
+}
+
+/** 目录内递归找内核可执行文件（替代原 `find` 命令：Windows Electron 的 PATH 里
+ *  System32 find.exe 不是 GNU find，bash/find 仅 Git Bash 环境可靠） */
+function findKernelBin(dir: string): string | null {
+  if (!fs.existsSync(dir)) return null
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      const hit = findKernelBin(full)
+      if (hit) return hit
+    } else if (e.name === 'chrome' || e.name === 'chromium') {
+      return full
+    }
+  }
+  return null
 }
 
 interface DockerKernel {
@@ -168,7 +206,7 @@ async function startDockerKernel(name: string, seed: string, platform: string, t
   const args = ['run', '-d', '--rm', '--name', name, '-p', `127.0.0.1:${port}:9223`, IMAGE,
     `--user-data-dir=/tmp/ks-${seed}`, `--fingerprint=${seed}`, `--fingerprint-platform=${platform}`,
     '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
-    'http://192.168.31.220:18080/']
+    `${SITE}/`]
   if (tz) args.push(`--timezone=${tz}`)
   await execFileP('docker', args)
   await waitEndpoint(port, 45000)

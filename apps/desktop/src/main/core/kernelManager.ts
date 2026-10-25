@@ -11,8 +11,29 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
+/** Windows 下删除目录易被 Defender/索引器瞬时持锁（EPERM）→ 带重试；maxRetries 仅对 Windows 生效 */
+function rmDirRobust(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 })
+}
+
 /** 轻量自检：能否真正执行（架构不匹配会 EBADARCH -86） */
 function execOkSync(exe: string): boolean {
+  if (process.platform === 'win32') {
+    // Windows 的 chrome.exe --version 不回显版本而是启动完整浏览器（GUI 子系统行为，
+    // 版本号输出是 POSIX 专属约定）——自检会挂 20s 并留下持锁进程。改读 PE 版本资源：
+    // 不执行进程，校验文件结构有效且带 Chromium 版本号
+    try {
+      const out = spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command',
+          `(Get-Item -LiteralPath '${exe.replace(/'/g, "''")}').VersionInfo.ProductVersion`],
+        { timeout: 15000, encoding: 'utf8' }
+      )
+      return out.status === 0 && /\d+\.\d+/.test(out.stdout.trim())
+    } catch {
+      return false
+    }
+  }
   try {
     return spawnSync(exe, ['--version'], { timeout: 20000 }).status === 0
   } catch {
@@ -80,10 +101,20 @@ function pickAsset(release: { assets: ReleaseAsset[] }): ReleaseAsset | null {
   return release.assets.find((a) => prefer.test(a.name)) || (accept ? release.assets.find((a) => accept.test(a.name)) : undefined) || null
 }
 
-/** 找到当前平台可用的最新版本（从新到旧，跳过无产物版本） */
+/** 已知问题版本（按平台规避上游 bug，选版时跳过）：
+ *  - 150.0.7871.186 (win)：--fingerprint 与 --fingerprint-platform 同时启用时，
+ *    canvas 像素回读（toDataURL/getImageData）死锁渲染进程（Page.enable 超时）；
+ *    同版本 Linux 容器内正常，148 win 正常。2026-10 Windows 实测定位。 */
+const KNOWN_BAD_VERSIONS: Partial<Record<NodeJS.Platform, string[]>> = {
+  win32: ['150.0.7871.186']
+}
+
+/** 找到当前平台可用的最新版本（从新到旧，跳过无产物版本与已知坏版本） */
 async function findLatestForPlatform(): Promise<{ version: string; asset: ReleaseAsset }> {
+  const bad = KNOWN_BAD_VERSIONS[process.platform] || []
   const releases = await listReleases()
   for (const rel of releases) {
+    if (bad.includes(rel.tag_name)) continue
     const asset = pickAsset(rel)
     if (asset) return { version: rel.tag_name, asset }
   }
@@ -130,7 +161,7 @@ function sha256File(file: string): Promise<string> {
 /** 解压到 dest/<version>/ 并返回内核可执行文件路径 */
 async function extract(assetName: string, archive: string, version: string): Promise<string> {
   const dest = path.join(kernelsRoot(), version)
-  fs.rmSync(dest, { recursive: true, force: true })
+  rmDirRobust(dest)
   fs.mkdirSync(dest, { recursive: true })
 
   if (/\.dmg$/i.test(assetName)) {
@@ -245,14 +276,16 @@ export class KernelManager {
 
   private installedVersion(): { version: string; exePath: string } | null {
     // 约定：kernels/<version>/.kernel-ready 内含 exe 路径；不可执行则自愈删除
+    const bad = KNOWN_BAD_VERSIONS[process.platform] || []
     try {
       for (const name of fs.readdirSync(kernelsRoot())) {
+        if (bad.includes(name)) continue // 已知坏版本不使用（见 KNOWN_BAD_VERSIONS 注释）
         const marker = path.join(kernelsRoot(), name, '.kernel-ready')
         if (fs.existsSync(marker)) {
           const exePath = fs.readFileSync(marker, 'utf8').trim()
           if (fs.existsSync(exePath) && execOkSync(exePath)) return { version: name, exePath }
           console.warn(`[kernel] ${name} 产物不可执行，清理`)
-          fs.rmSync(path.join(kernelsRoot(), name), { recursive: true, force: true })
+          rmDirRobust(path.join(kernelsRoot(), name))
         }
       }
     } catch {
@@ -289,7 +322,7 @@ export class KernelManager {
       this.onProgress?.({ status: 'extracting', message: '解压内核…' })
       const exePath = await extract(asset.name, archive, version)
       if (!execOkSync(exePath)) {
-        fs.rmSync(path.join(kernelsRoot(), version), { recursive: true, force: true })
+        rmDirRobust(path.join(kernelsRoot(), version))
         throw new Error(
           process.platform === 'darwin'
             ? `产物架构与本机不符（macOS 预编译为 ARM64）：请本地导入自建内核`
@@ -308,8 +341,9 @@ export class KernelManager {
     }
   }
 
-  /** 本地导入的可执行文件自检（能输出版本号视为可用） */
+  /** 本地导入的可执行文件自检（能输出版本号视为可用；win 走 PE 版本资源） */
   async validateLocalExe(exePath: string): Promise<boolean> {
+    if (process.platform === 'win32') return execOkSync(exePath)
     try {
       const { stdout } = await promisify(execFile)(exePath, ['--version'], { timeout: 15000 })
       return /chrom/i.test(stdout)

@@ -1,0 +1,3 @@
+# Windows 克隆防护：shell 脚本必须 LF（CRLF 会让容器内 /bin/sh\r 解释器找不到，
+# 报 "exec /entrypoint.sh: no such file or directory"；fetch.sh 同理）
+*.sh text eol=lf

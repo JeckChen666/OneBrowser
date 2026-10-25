@@ -54,7 +54,7 @@ S3：u/<uid>/envs/<envId>/snapshots/<snapId>/{manifest.json, blob.enc}   ← 全
 
 ## 快速开始
 
-前置：Go ≥1.26、Node ≥22 / pnpm ≥11、Docker（跑 Postgres）、MinIO（任意 S3 兼容服务；Windows/Docker 路径见 [docs/windows-migration.md](docs/windows-migration.md)）。
+前置：Go ≥1.26、Node ≥22 / pnpm ≥11、Docker（跑 Postgres）、任意 S3 兼容服务（本地开发用 localstack，MinIO 已停止分发；Windows 完整路径见 [docs/windows-migration.md](docs/windows-migration.md)）。
 
 ```bash
 make infra        # Postgres（docker）+ MinIO（:9000，console :9001）

@@ -25,7 +25,12 @@ const EXCLUDES = [
   'component_crx_cache',
   'extensions_crx_cache',
   'tmp',
-  'Safe Browsing'
+  'Safe Browsing',
+  // 单实例锁/套接字：每次启动重建的运行时文件；经 Windows 挂载回宿主后形态特殊
+  // （symlink/unix socket），bsdtar stat 报 EINVAL，且漫游无意义
+  'SingletonCookie',
+  'SingletonLock',
+  'SingletonSocket'
 ]
 
 function tarExcludeArgs(): string[] {
@@ -36,6 +41,17 @@ function tarExcludeArgs(): string[] {
     args.push('--exclude', name, '--exclude', `*/${name}`)
   }
   return args
+}
+
+/** tar 可执行文件：win32 优先系统自带 bsdtar（System32）。Git Bash 的 GNU tar 会把
+ *  C:\ 绝对路径当作 host:path 远程语法（"Cannot connect to C: resolve failed"）；
+ *  bsdtar 原生支持盘符路径（zstd 不支持时由 tarDir 的 gzip 兜底路径接管）。 */
+function tarBin(): string {
+  if (process.platform === 'win32') {
+    const sys = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    if (fs.existsSync(sys)) return sys
+  }
+  return 'tar'
 }
 
 let zstdBin: string | null | undefined
@@ -89,7 +105,7 @@ async function tarViaTmpFile(flag: string, ext: string, base: string[]): Promise
   const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ob-tar-')), `pack${ext}`)
   try {
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn('tar', [flag, '-cf', tmp, ...base], { stdio: ['ignore', 'ignore', 'pipe'] })
+      const proc = spawn(tarBin(), [flag, '-cf', tmp, ...base], { stdio: ['ignore', 'ignore', 'pipe'] })
       let errText = ''
       proc.stderr.on('data', (c: Buffer) => (errText += c.toString()))
       proc.on('error', reject)
@@ -112,7 +128,7 @@ export async function untarTo(buffer: Buffer, destDir: string, format: ArchiveFo
   try {
     await new Promise<void>((resolve, reject) => {
       const flag = format === 'tar+zstd' ? '--zstd' : '-z'
-      const proc = spawn('tar', [flag, '-xf', tmp, '-C', destDir], { stdio: ['ignore', 'ignore', 'pipe'] })
+      const proc = spawn(tarBin(), [flag, '-xf', tmp, '-C', destDir], { stdio: ['ignore', 'ignore', 'pipe'] })
       let errText = ''
       proc.stderr.on('data', (c: Buffer) => (errText += c.toString()))
       proc.on('error', reject)

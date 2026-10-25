@@ -12,9 +12,18 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-25，开发机迁移 Windows）
+## 当前状态（快照，2026-10-26，Windows 开发机 W1 完成）
 
-- **平台策略变更**：mac(Intel) 编译 Chromium 太慢（前台占用 1.5–2 天），开发切到 Windows——**Windows 有官方预编译内核（x64 zip/exe），W1 零编译即可跑通**；kernelManager 已补 win 解压分支（typecheck 过，待 Windows 实测）。
+- **W1 已完成（Windows 全链路验证通过，tag `v0.4.0-win-prepared`）**：builtin e2e 17/17 ·
+  kernel-smoke(docker) 7/7 · kernel-smoke(native 官方 win 内核) 6/6 · e2e:fp 10/10 ·
+  e2e:interop 13/13 · e2e:l2 7/7 · Go 单测全绿。kernelManager win 分支（下载/解压/自检）实战验证。
+- **Windows 环境落地**：Node 24 + pnpm 12 + Go 1.24（GOTOOLCHAIN=auto 自动拉 1.26）+ Docker Desktop；
+  本地 S3 用 localstack 3.8.1（MinIO 已全渠道停发）；Postgres 容器因宿主 5432 被原生服务占用
+  改映射 55432（`deploy/docker-compose.override.yml`，不入库）。
+- **Windows 十二坑全部修复入库**（详见 `docs/windows-migration.md`「W1 完成纪要」）：CRLF/
+  docker build 上下文/chrome.exe --version 行为/**150 win 内核 canvas 死锁（KNOWN_BAD 规避选 148）**/
+  容器挂载路径/无扩展名 spawn/go build 管道继承/GNU tar 盘符/Singleton LX symlink/迁移竞态等。
+- **平台策略变更**：mac(Intel) 编译 Chromium 太慢（前台占用 1.5–2 天），开发切到 Windows。
 - **mac 构建现场已存档**：`/Users/macos/Code/ob-kernel-build/` 停在 [2500/42722]（工具链+增量缓存全在，`ninja -C out/OneBrowser chrome` 可续）；九个构建坑全部记录在 `scripts/kernel-build/README.md`。
 - **V0.4 进度**：B（mac 安装包）✅ C（生产硬化）✅；A 的 mac/linux 补丁+产品接线 ✅，win 端补丁与三端自建内核转 Windows 继续（W2–W4）。
 - **V0.4-A 构建现场（网络大坑已排平，全链路看护中）**：机器 10-24 前后重启杀过流水线；本周排掉三个连环坑——①googlesource/GitHub 需走系统代理（127.0.0.1:7897，构建命令须显式注入）；②rust-src 与 llvm monorepo 的 googlesource 镜像不可达，build_rust.py/build.py 的 GIT_URL 已改 GitHub 官方源；③chromium 专属 llvm tag（llvmorg-23-init-5669-g8a0be0bc）在 GitHub 无同名 tag，已手动造 tag 指向同 commit（8a0be0bc3772…）实现复用。**当前：rust 工具链 LLVM 编译中（14:27 起）**，看护脚本自动接力 gn gen→autoninja（/tmp/ob-pipeline.log）；补丁代码未动，PoC 等产物。
@@ -30,21 +39,20 @@
 - **版本**：V0.2.0 已发版（tag `v0.2.0`）——双承载（builtin ⇄ kernel 指纹内核）+ 代理/auto 时区 + 保留策略 + 会话健康检查
 - **验证基线**：Go 测试（auth/leases/snapshots/testsite）· typecheck · kernel-smoke 7/7 · builtin e2e 17/17 · interop 12/12 · fp e2e 10/10（全绿）
 - **KI-1/KI-2 已解决**：根因均为非法 seed（必须 32 位整数，读取 `navigator.hardwareConcurrency` 即死锁）；客户端已强校验 + 旧数据回填
-- **运行环境**：server(:8787) / test-site(:18080) / Postgres(docker) / MinIO(:9000) 本机常驻
+- **运行环境**：server(:8787，DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) / Postgres(docker :55432) / localstack S3(:4566) 本机常驻
 - **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；镜像 `onebrowser-kernel-smoke`）
 
 ## 下一步（按优先级，Windows 开发机；迁移指南 docs/windows-migration.md）
 
-1. **W1 Windows 环境搭建 + 官方 win 内核跑通全链路**（零编译）：按迁移文档装 Node/pnpm/Go/Docker Desktop；MinIO 用 mcr 镜像；防火墙放行后跑 kernel-smoke/指纹 e2e——验证 kernelManager 新补的 win zip/exe 解压分支。通过即可打 tag `v0.4.0-win-prepared`（或直接 v0.4.0，W1 起官方内核已是产品可用形态）。
-2. **W2 win 端 os_crypt 补丁**：`os_crypt_win.cc`（DPAPI 路径）加 `--os-crypt-key`，与 mac/linux 补丁（`scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch`）同构；基于 148 源码 `components/os_crypt/win/`。
-3. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：打齐三端补丁；mac x64 产物顺便在 CI 出。
-4. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台 → V0.4 正式发版。
-5. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
-2. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
-3. **V0.5 规划**：增量快照、自动更新（electron-updater）、团队协作。
+1. **W2 win 端 os_crypt 补丁**：`os_crypt_win.cc`（DPAPI 路径）加 `--os-crypt-key`，与 mac/linux 补丁（`scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch`）同构；基于 148 源码 `components/os_crypt/win/`。
+2. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：打齐三端补丁；mac x64 产物顺便在 CI 出。
+3. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台 → V0.4 正式发版。
+4. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
+5. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 
 ## 已完成归档
 
+- **[2026-10-26] W1 Windows 环境搭建 + 官方 win 内核全链路（tag `v0.4.0-win-prepared`）**：本地栈三件套落地（localstack 3.8.1 替 MinIO / Postgres 55432 规避端口冲突 / Go 1.26 工具链自拉）；验证矩阵全绿（builtin 17/17 · smoke-docker 7/7 · smoke-native 6/6 · fp 10/10 · interop 13/13 · l2 7/7 · Go 全绿）；kernelManager win 分支实战验证（含 KNOWN_BAD 版本规避）；Windows 十二坑修复入库（详见 docs/windows-migration.md「W1 完成纪要」）。
 - **[2026-10-17] V0.4-A 准备 + V0.4-C（生产硬化）**：os-crypt-key 补丁（mac/linux 双端）+ bootstrap/build 脚本 + KI-1 源码级实锤；ratelimit（令牌桶+429）+ USER_QUOTA_GB + health?deep + deploy 生产栈与 production.md。
 - **[2026-10-17] V0.4-B mac（安装包）**：electron-builder.yml + dist:mac/dist 脚本 + pnpm allowBuilds（electron-winstaller=false）；dmg 双架构构建与包内 e2e 验收。
 - **[2026-10-17] V0.3.1（zstd + 观测）**：tar+zstd（gzip 兜底）+ format 入 manifest + 临时文件中转规避 bsdtar 流式缺陷 + 排除表补 Dawn 缓存 + 体积/耗时日志。

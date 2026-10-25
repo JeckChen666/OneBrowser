@@ -73,8 +73,19 @@ export class DockerKernelLauncher implements KernelLauncher {
     ]
     // profile 宿主目录挂载直通（L2 快照的数据面）：
     // 容器内内核直接读写宿主目录，抓取 = 冻结 + 宿主侧打包，恢复 = 预填充 + 正常启动
-    if (profileDir) runArgs.push('-v', `${profileDir}:${profileDir}`)
-    runArgs.push(this.image, ...args)
+    // win32 宿主路径不能作为 Linux 容器挂载目标（C:\ 非绝对路径）→ 固定挂到 /ob-profile，
+    // 并把传给容器内内核的 --user-data-dir 重写为容器侧路径（浅层无空格，也规避 S3 排障的 CDP 挂死）
+    let containerArgs = args
+    let containerProfile: string | undefined
+    if (profileDir && process.platform === 'win32') {
+      containerProfile = '/ob-profile'
+      runArgs.push('-v', `${profileDir}:${containerProfile}`)
+      containerArgs = args.map((a) => (a === `--user-data-dir=${profileDir}` ? `--user-data-dir=${containerProfile}` : a))
+    } else if (profileDir) {
+      containerProfile = profileDir
+      runArgs.push('-v', `${profileDir}:${profileDir}`)
+    }
+    runArgs.push(this.image, ...containerArgs)
     // execFileP 等待命令完成（-d 返回即容器已创建）——spawn 事件仅代表进程创建，
     // 若不等完成，后续 docker wait 会在容器注册前执行而报 No such container
     await execFileP('docker', runArgs)
@@ -87,6 +98,15 @@ export class DockerKernelLauncher implements KernelLauncher {
       }
     }
     const quiesce = async <T>(fn: () => Promise<T>): Promise<T> => {
+      // 容器内先清掉 Chromium 的单实例锁（Singleton* 是 Linux symlink；经 WSL2 挂载落到
+      // NTFS 后是 LX reparse point，Windows 侧 stat 报 EINVAL——宿主 tar 打包会失败，
+      // 且宿主侧删不掉（root 属主 EACCES）。运行中删除无副作用：它们只在内核启动时创建）
+      if (containerProfile) {
+        await execFileP('docker', [
+          'exec', name, 'sh', '-c',
+          `rm -f '${containerProfile}/SingletonCookie' '${containerProfile}/SingletonLock' '${containerProfile}/SingletonSocket'`
+        ]).catch((e) => console.log(`[launcher] Singleton 清理失败(忽略): ${e instanceof Error ? e.message : e}`))
+      }
       // pause 冻结容器内全部进程（含 Chromium 的 SQLite/LevelDB 写入），
       // 保证宿主侧读到一致性视图；无论成败都要 unpause
       await execFileP('docker', ['pause', name]).catch((e) => {

@@ -13,6 +13,8 @@ apps/desktop/dist/
 
 # 本地开发数据
 .minio-data/
+deploy/docker-compose.override.yml
+.bin/
 .v2c/
 .idea/
 scripts/kernel-docker/kernel/

@@ -1,0 +1,5 @@
+# 构建上下文瘦身：内核 tarball 与解压产物之外的都是噪声（fetch.sh 下载的 .tar.xz 有 139MB）
+*
+!kernel/
+!entrypoint.sh
+!Dockerfile

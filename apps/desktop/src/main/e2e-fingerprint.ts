@@ -204,8 +204,29 @@ export async function runE2EFingerprint(): Promise<number> {
     // 注：Docker Desktop 下容器→宿主机流量经 host 栈 NAT，代理侧来源恒为宿主机 IP，
     // 无法用「来源=容器 IP」断言；改用「代理日志含页面请求 + 站点来源非 docker VM 网段」
     const testSiteDir = path.resolve(app.getAppPath(), '../../test-site')
-    const proxyBin = path.join(os.tmpdir(), 'ob-testsite-proxy')
-    await execFileP('go', ['build', '-o', proxyBin, '.'], { cwd: testSiteDir, timeout: 120000 })
+    // Windows 坑两则：①go build -o 不带 .exe 会产出无扩展名文件，Node spawn 对无扩展名
+    // 可执行文件直接 ENOENT（CreateProcess 路径解析）；②execFile 等 close 事件，而 go 的
+    // 孙进程（compile/link worker）继承 stdout 管道，go.exe 退出后管道不关 → 永久挂起。
+    // → 产物名带平台后缀 + stdio:ignore 只等 exit 事件。
+    const proxyBin = path.join(
+      os.tmpdir(),
+      process.platform === 'win32' ? 'ob-testsite-proxy.exe' : 'ob-testsite-proxy'
+    )
+    await new Promise<void>((resolve, reject) => {
+      const p = spawnProcess('go', ['build', '-o', proxyBin, '.'], { cwd: testSiteDir, stdio: 'ignore' })
+      const timer = setTimeout(() => {
+        p.kill()
+        reject(new Error('go build 超时（120s）'))
+      }, 120000)
+      p.once('exit', (code) => {
+        clearTimeout(timer)
+        code === 0 ? resolve() : reject(new Error(`go build 退出码 ${code}`))
+      })
+      p.once('error', (e) => {
+        clearTimeout(timer)
+        reject(e)
+      })
+    })
     // 端口被占（上次运行的残留代理）会让 waitTcp 假成功——先拒绝启动
     const stale = await new Promise<boolean>((resolve) => {
       const s = net.connect(18081, '127.0.0.1')
