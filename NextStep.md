@@ -12,8 +12,14 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-26，Windows 开发机 W1+W2 完成）
+## 当前状态（快照，2026-10-27，W1/W2 完成，W3 构建长跑中）
 
+- **W3 进行中（win 自建内核）**：构建管线全通——源码树+126 上游补丁+OneBrowser 三补丁
+  落树；工具链全预编译（clang/rust gcs 包/node/gperf/dxheaders）；gn 2354 自举成功；
+  gn gen 28,840 目标；ninja 52k 步长跑中（零失败推进）。过程踩坑 12+ 全部修复并固化进
+  `bootstrap-win.sh`/`build-win.sh`（坑清单见 kernel-build README「Windows 构建纪要」：
+  NTDDI overlay、WINCRYPT_USE_SYMBOL_PREFIX、ATL layout、gnrt vendor 缺件、GBK 系列等）。
+  新增 101（vs_toolchain 本地 SDK）/102（rlz win）/103（icacls GBK）三补丁入库。
 - **W2 已完成（win 端 os_crypt 补丁，2026-10-26）**：100-os-crypt-key.patch 补齐第四文件
   `os_crypt_win.cc`——switch 注入 16B 密钥跳过 DPAPI/Local State；**漫游模式对齐 mac/linux
   v11 线格式（AES-128-CBC/16B key/16 空格 IV）**，同一 profile 三平台互解；v10/DPAPI 原生

@@ -40,15 +40,61 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
 - [x] 产品侧接线：DEK→HKDF('os-crypt:<envId>')→16B hex 恒定注入内核 flag，
       旧内核忽略未知 switch（e2e:l2 7/7），容器实参捕获确认
 - [ ] 自建内核构建产物 + os-crypt-roaming PoC 通过（双 profile 拷贝互解，跨平台）
-      ——mac 现场存档见下；win 构建转 W3（VS Build Tools）
+      ——mac 现场存档见下；win 构建 W3 进行中：管线全通（gn gen 28,840 目标，
+      ninja 52k 步长跑），见「Windows 构建纪要」
 
-## Windows 路线（2026-10-25 起，主线转 Windows）
+## Windows 路线（2026-10-25 起，主线转 Windows；2026-10-27 W3 管线全通）
 
-**Windows 开发不需要本仓库的构建流程**——官方 Releases 有 win x64 预编译内核
-（`windows_x64.zip`），kernelManager 直接下载。本目录流程仅当需要**自带 os_crypt
-补丁的自建内核**时使用，且 Windows 本机构建用 VS Build Tools（官方支持），
-mac/Linux 走 WSL2 或 CI。win 端补丁（os_crypt_win.cc 的 DPAPI 路径）尚未写——
-参照 100-os-crypt-key.patch 的 mac/linux 写法在 `components/os_crypt/win/` 实现。
+**日常开发/验证不需要本目录流程**——官方 Releases 有 win x64 预编译内核（已由 W1 验证）。
+本目录流程产出**自带 os_crypt 补丁的自建内核**（解锁跨平台 L2 漫游，W4 PoC 用）。
+
+**Windows 构建纪要（2026-10-26/27，D:/ob-kernel-build 实测，全部免管理员）**：
+
+- 入口：`bash bootstrap-win.sh D:/ob-kernel-build` → `bash build-win.sh D:/ob-kernel-build`。
+  脚本按实测流程固化；下述每一条坑都已在脚本内规避。
+- **源码包**：`downloads.py retrieve`（SSL 瞬时抖动重跑即可，支持断点续传）；解包必须
+  7z（`--7z-path` 指到 NanaZip：它不写注册表，脚本自身的注册表探测还会抛异常）；
+  System32 bsdtar 对该包报 empty filename 不可用。
+- **prune 过剪**：`v8/test/torque/test-torque.tq` 被剪但 v8 构建引用 → 从缓存 tarball 单文件
+  恢复（脚本已做）。
+- **rust 工具链**：走 DEPS 的 Win 预编译 gcs 包（sha256 校验），**不要** build_rust.py 源码
+  编译（mac 上 2-4h 的坑在 Windows 同样存在且毫无必要）。lite 包丢 vendor crate 自带的
+  import lib（windows.0.52.0.lib）→ 从 crates.io 原包补回后必须重跑 `gnrt gen`
+  （否则 native_libs 不进 BUILD.gn，cxxbridge 链接 `could not open 'windows.0.52.0.lib'`）。
+- **rust GN 规则**：`gnrt gen` + `gnrt gen --for-std=third_party/rust-toolchain/lib/rustlib/src/rust`
+  （预编译包的 std 源在该路径）；需 `RUSTC_BOOTSTRAP=1`（内部 cargo metadata 用 -Z）；
+  Windows 下 gnrt 调 `gn.bat`，PATH 要同时有 buildtools/win 的 gn.exe 与 depot_tools。
+- **gn 自举**：新版 depot_tools 不带 gn（CIPD 是 Googler 渠道）；`tools/gn/bootstrap/bootstrap.py`
+  有 Windows 目标名 bug（调 `gn`，实际 `gn.exe`）——让它生成 build.ninja 后失败，
+  手工 `ninja gn.exe`。需要完整 MSVC 环境 + `CL=/utf-8`（中文系统 C4819 警告被 /WX
+  升级为错误）+ SDK bin 入 PATH（链接期 mt.exe）。
+- **VS 残装检测**：默认工具集 14.40 可能只有 bin/lib 没有 include（运行库残件）——
+  找**带 include/ 的**完整工具集（本机为 14.37.32822）。
+- **vs-shim**：本机 VS 的 vcvarsall.bat 缺失（Program Files 不可写没法补）→ 手写
+  `vs-shim/VC/vcvarsall.bat` 复刻 env（setup_toolchain.py 经 GYP_MSVS_OVERRIDE_PATH 执行
+  并解析 include/lib/libpath/path）。**bat 必须纯 ASCII**：cmd 按系统 ANSI（GBK）解析，
+  UTF-8 中文注释会把 bat 撕成乱码命令。
+- **SDK overlay（两个头）**：148 编译旗标 `-DNTDDI_VERSION=NTDDI_WIN11_GE`，22621 的
+  sdkddkver.h 无此常量 → NTDDI 在 #if 里求值 0 → fileapi.h 等 NTDDI 门控声明全部消失
+  （`FILE_INFO_BY_HANDLE_CLASS` 未知类型）。overlay `sdk-overlay/sdkddkver.h`
+  （本仓库 `win-overlay/` 自带）先定义 GE=0x0A000010 再 `#include_next`。另外 22621 的
+  wincrypt.h 缺 `WINCRYPT_USE_SYMBOL_PREFIX` 防护（26100 新增，Chromium 148 全局启用
+  该宏依赖它跳过 `#define X509_NAME ((LPCSTR)7)` 遗留块）→ X509_NAME 宏撞 boringssl
+  typedef。提取 26100 ISO 的 `Windows SDK for Windows Store Apps Headers` MSI 里的
+  um/wincrypt.h 放 overlay（`msiexec /a` 免管理员；26100 实测验证两者防护差异是唯一
+  根因——最小复现不带 overlay 也复现）。
+- **SDK 版本**：gn 自动探测要求 26100，本机 22621 → `WINDOWSSDKVERSION=10.0.22621.0`
+  环境变量 + vs_toolchain.py 101 补丁（dbghelp 缺 Debuggers 特性时落 System32、
+  本地工具链模式输出 env 指定的 SDK 版本）。
+- **rlz**：ungoogled 把 `enable_rlz_support` 硬编 false，但 Windows 安装器无条件依赖
+  `//rlz:rlz_lib_no_network` → gn gen 失败。102 补丁恢复上游 is_win 条件（enable_rlz
+  仍 false，无行为差异）。
+- **icacls GBK**：set_appcontainer_acls 用 subprocess 读 icacls 输出，本机 PYTHONUTF8=1
+  下 GBK 输出解码崩溃 → 103 补丁 `errors='replace'`。
+- **ATL**：base/win atl.h 等生产代码真用 ATL，VS 残装没有 atlmfc → VS 引导器 `--layout`
+  免管理员拉 ATL 14.44 包（payload.vsix 用 7z 解），头进 overlay、atls.lib 目录进 shim LIB。
+- **python3 别名**：WindowsApps 的 python3.exe 是 Store 占位（exec_script 拿 9009）→
+  bin/python3.exe 放真身；args.gn 里 `script_executable` 亦可。
 
 ## 构建现场（2026-10-18 起，进度；10-25 已暂停存档）
 

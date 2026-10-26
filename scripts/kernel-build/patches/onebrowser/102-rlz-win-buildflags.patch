@@ -1,0 +1,13 @@
+--- a/rlz/buildflags/buildflags.gni
++++ b/rlz/buildflags/buildflags.gni
+@@ -6,6 +6,10 @@
+ 
+ # Whether we are using the rlz library or not.  Platforms like Android send
+ # rlz codes for searches but do not use the library.
++# OneBrowser: restore the upstream condition (ungoogled hardcodes false, which
++# breaks gn gen on Windows where //chrome/installer/setup unconditionally
++# depends on //rlz:rlz_lib_no_network; enable_rlz stays false for unbranded
++# builds, so no rlz usage ships — only the library builds to satisfy the dep).
+ enable_rlz_support = is_win || is_apple || is_chromeos
+ 
+ declare_args() {

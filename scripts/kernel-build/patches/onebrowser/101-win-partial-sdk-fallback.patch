@@ -1,0 +1,47 @@
+--- a/build/vs_toolchain.py
++++ b/build/vs_toolchain.py
+@@ -470,6 +470,16 @@
+   for debug_file, is_optional in debug_files:
+     full_path = os.path.join(win_sdk_dir, 'Debuggers', target_cpu, debug_file)
+     if not os.path.exists(full_path):
++      # OneBrowser: partial Windows SDK installs (without the optional
++      # "Debugging Tools for Windows" feature) fall back to the system copies
++      # in System32/SysWOW64. Building and running chrome does not need the
++      # SDK debuggers copy specifically.
++      sys_dir = 'SysWOW64' if target_cpu == 'x86' else 'System32'
++      sys_fallback = os.path.join(
++          os.environ.get('SYSTEMROOT', r'C:\Windows'), sys_dir, debug_file)
++      if os.path.exists(sys_fallback):
++        full_path = sys_fallback
++    if not os.path.exists(full_path):
+       if is_optional:
+         continue
+       else:
+@@ -643,6 +653,18 @@
+     )
+     return 1
+ 
++  # OneBrowser: in local-toolchain mode (DEPOT_TOOLS_WIN_TOOLCHAIN=0) report
++  # the SDK version from the vcvars environment instead of the hard-coded
++  # SDK_VERSION. Partial SDK installs (e.g. only 10.0.22621.0 present while
++  # SDK_VERSION says 10.0.26100.0) otherwise make gn rules that reference SDK
++  # files by versioned path (dxil.dll etc.) unresolvable.
++  sdk_version_for_gn = SDK_VERSION
++  if not bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', '1'))):
++    env_sdk_version = os.environ.get(
++        'WINDOWSSDKVERSION', '').rstrip('\\').strip()
++    if env_sdk_version:
++      sdk_version_for_gn = env_sdk_version
++
+   print('''vs_path = %s
+ sdk_version = %s
+ sdk_path = %s
+@@ -650,7 +672,7 @@
+ wdk_dir = %s
+ runtime_dirs = %s
+ ''' % (ToGNString(NormalizePath(
+-      os.environ['GYP_MSVS_OVERRIDE_PATH'])), ToGNString(SDK_VERSION),
++      os.environ['GYP_MSVS_OVERRIDE_PATH'])), ToGNString(sdk_version_for_gn),
+        ToGNString(win_sdk_dir), ToGNString(version_as_year),
+        ToGNString(NormalizePath(os.environ.get('WDK_DIR', ''))),
+        ToGNString(os.path.pathsep.join(runtime_dll_dirs or ['None']))))

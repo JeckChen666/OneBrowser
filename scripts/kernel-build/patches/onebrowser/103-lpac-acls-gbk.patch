@@ -1,0 +1,16 @@
+--- a/testing/scripts/common.py
++++ b/testing/scripts/common.py
+@@ -66,9 +66,12 @@
+   if sys.getwindowsversion().build < 19041:
+     return
+   try:
++    # OneBrowser: icacls output is ANSI-encoded on non-English Windows (GBK
++    # here); decoding it as strict UTF-8 crashes the acls stamp action.
+     existing_acls = subprocess.check_output(['icacls', acl_dir],
+                                             stderr=subprocess.STDOUT,
+-                                            universal_newlines=True)
++                                            universal_newlines=True,
++                                            errors='replace')
+   except subprocess.CalledProcessError as e:
+     logging.error('Failed to retrieve existing ACLs for directory %s', acl_dir)
+     logging.error('Command output: %s', e.output)
