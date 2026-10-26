@@ -189,19 +189,19 @@ fi
 mkdir -p "$WORK/vs-shim/VC" "$WORK/sdk-overlay"
 cp "$REPO/win-overlay/sdkddkver.h" "$WORK/sdk-overlay/"
 if [ ! -f "$WORK/sdk-overlay/wincrypt.h" ]; then
-  # 26100 ABI 头 overlay 统一取自微软官方 Microsoft.Windows.SDK.cpp NuGet 包
-  #（= 完整 SDK C++ 头集合，免管理员单文件下载；替代逐个 msiexec /a 拆 MSI）：
-  #  - wincrypt.h：22621 缺 WINCRYPT_USE_SYMBOL_PREFIX 防护（X509_NAME 宏撞 boringssl）
-  #  - windows.graphics.capture.h：22621 缺 IGraphicsCaptureSession6（webrtc）
-  #  - dcomp.h/dcompanimation.h：22621 缺 IDCompositionDynamicTexture（ui/gl）
+  # 26100 ABI 头 overlay：整体并入微软官方 Microsoft.Windows.SDK.cpp NuGet 包的
+  # um/+shared/ 头集（≈2200 个头平铺到 overlay 根），一次性终结「22621 缺 26100 新
+  # 常量/新接口」这一类缺口（实测逐一撞过：NTDDI_WIN11_GE、WINCRYPT_USE_SYMBOL_PREFIX
+  # 的 X509_NAME、IGraphicsCaptureSession6、IDCompositionDynamicTexture、
+  # D3D_FEATURE_LEVEL_1_0_GENERIC）。注意 winrt/ 子目录不要并入——ABI 头已在根，
+  # 并入会遮蔽 cppwinrt 投影 <winrt/...> 路径。
   SDKCPP_VER=10.0.26100.9169
   curl -sL -o "$WORK/sdkcpp.nupkg" \
     "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp/$SDKCPP_VER/microsoft.windows.sdk.cpp.$SDKCPP_VER.nupkg"
   "$SEVENZIP" x "$WORK/sdkcpp.nupkg" -o"$WORK/sdkcpp" -y -bso0 >/dev/null
   SC="$WORK/sdkcpp/c/Include/10.0.26100.0"
-  cp "$SC/um/wincrypt.h" "$WORK/sdk-overlay/"
-  cp "$SC/winrt/windows.graphics.capture.h" "$WORK/sdk-overlay/"
-  cp "$SC/um/dcomp.h" "$SC/um/dcompanimation.h" "$WORK/sdk-overlay/"
+  cp -r "$SC/um"/* "$WORK/sdk-overlay/"
+  cp -r "$SC/shared"/* "$WORK/sdk-overlay/"
 fi
 ATL_X64="$WORK/atl/x64/Contents/VC/Tools/MSVC/14.44.35207/atlmfc/lib/x64"
 ATL_X86="$WORK/atl/x86/Contents/VC/Tools/MSVC/14.44.35207/atlmfc/lib/x86"
