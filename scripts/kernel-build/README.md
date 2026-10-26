@@ -74,15 +74,16 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
   `vs-shim/VC/vcvarsall.bat` 复刻 env（setup_toolchain.py 经 GYP_MSVS_OVERRIDE_PATH 执行
   并解析 include/lib/libpath/path）。**bat 必须纯 ASCII**：cmd 按系统 ANSI（GBK）解析，
   UTF-8 中文注释会把 bat 撕成乱码命令。
-- **SDK overlay（两个头）**：148 编译旗标 `-DNTDDI_VERSION=NTDDI_WIN11_GE`，22621 的
-  sdkddkver.h 无此常量 → NTDDI 在 #if 里求值 0 → fileapi.h 等 NTDDI 门控声明全部消失
-  （`FILE_INFO_BY_HANDLE_CLASS` 未知类型）。overlay `sdk-overlay/sdkddkver.h`
-  （本仓库 `win-overlay/` 自带）先定义 GE=0x0A000010 再 `#include_next`。另外 22621 的
-  wincrypt.h 缺 `WINCRYPT_USE_SYMBOL_PREFIX` 防护（26100 新增，Chromium 148 全局启用
-  该宏依赖它跳过 `#define X509_NAME ((LPCSTR)7)` 遗留块）→ X509_NAME 宏撞 boringssl
-  typedef。提取 26100 ISO 的 `Windows SDK for Windows Store Apps Headers` MSI 里的
-  um/wincrypt.h 放 overlay（`msiexec /a` 免管理员；26100 实测验证两者防护差异是唯一
-  根因——最小复现不带 overlay 也复现）。
+- **SDK overlay（26100 ABI 头，统一取自 Microsoft.Windows.SDK.cpp NuGet 包）**：148 对
+  SDK 头有 26100 时代的依赖，本机 22621 缺三样——①`sdkddkver.h` 无 `NTDDI_WIN11_GE`
+  常量（→ NTDDI 求值 0，NTDDI 门控声明全消失，`FILE_INFO_BY_HANDLE_CLASS` 未知类型）；
+  ②wincrypt.h 缺 `WINCRYPT_USE_SYMBOL_PREFIX` 防护（26100 新增，Chromium 全局启用该宏
+  却跳不过 `#define X509_NAME ((LPCSTR)7)` 遗留块 → 撞 boringssl typedef）；③WinRT/COM
+  新接口缺失（webrtc 要 `IGraphicsCaptureSession6`、ui/gl 要 `IDCompositionDynamicTexture`）。
+  overlay（bootstrap 自动从 nupkg 提取）：`sdk-overlay/sdkddkver.h`（仓库自带）+
+  um/wincrypt.h + winrt/windows.graphics.capture.h + um/dcomp.h + um/dcompanimation.h。
+  注意 ABI 头在 SDK 顶层 `winrt/` 目录（`<windows.graphics.capture.h>` 的解析处），
+  与 cppwinrt 的 `winrt/` 投影是两回事，别放错 overlay 相对路径。
 - **SDK 版本**：gn 自动探测要求 26100，本机 22621 → `WINDOWSSDKVERSION=10.0.22621.0`
   环境变量 + vs_toolchain.py 101 补丁（dbghelp 缺 Debuggers 特性时落 System32、
   本地工具链模式输出 env 指定的 SDK 版本）。

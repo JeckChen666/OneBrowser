@@ -189,17 +189,19 @@ fi
 mkdir -p "$WORK/vs-shim/VC" "$WORK/sdk-overlay"
 cp "$REPO/win-overlay/sdkddkver.h" "$WORK/sdk-overlay/"
 if [ ! -f "$WORK/sdk-overlay/wincrypt.h" ]; then
-  # 26100 ISO（免管理员下载）：https://learn.microsoft.com/windows/apps/windows-sdk/downloads
-  ISO="${SDK26100_ISO:?请下载 26100 ISO 并以 SDK26100_ISO=<路径> 指定（免管理员 msiexec /a 提取）}"
-  mkdir -p "$WORK/sdk-iso"
-  "$SEVENZIP" x "$ISO" -o"$WORK/sdk-iso/iso" -y -bso0 >/dev/null
-  cat > "$WORK/msi-x.bat" <<EOF
-@echo off
-msiexec /a "$(cygpath -w "$WORK/sdk-iso/iso/Installers/Windows SDK for Windows Store Apps Headers-x86_en-us.msi" | sed 's/\\\\/\\\\\\\\/g')" /qn TARGETDIR=$(cygpath -w "$WORK/sdk-extract/storeapps" | sed 's/\\\\/\\\\\\\\/g')
-EOF
-  cmd //c "$(cygpath -w "$WORK/msi-x.bat")"
-  cp "$WORK/sdk-extract/storeapps/Windows Kits/10/Include/10.0.26100.0/um/wincrypt.h" \
-     "$WORK/sdk-overlay/wincrypt.h"
+  # 26100 ABI 头 overlay 统一取自微软官方 Microsoft.Windows.SDK.cpp NuGet 包
+  #（= 完整 SDK C++ 头集合，免管理员单文件下载；替代逐个 msiexec /a 拆 MSI）：
+  #  - wincrypt.h：22621 缺 WINCRYPT_USE_SYMBOL_PREFIX 防护（X509_NAME 宏撞 boringssl）
+  #  - windows.graphics.capture.h：22621 缺 IGraphicsCaptureSession6（webrtc）
+  #  - dcomp.h/dcompanimation.h：22621 缺 IDCompositionDynamicTexture（ui/gl）
+  SDKCPP_VER=10.0.26100.9169
+  curl -sL -o "$WORK/sdkcpp.nupkg" \
+    "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp/$SDKCPP_VER/microsoft.windows.sdk.cpp.$SDKCPP_VER.nupkg"
+  "$SEVENZIP" x "$WORK/sdkcpp.nupkg" -o"$WORK/sdkcpp" -y -bso0 >/dev/null
+  SC="$WORK/sdkcpp/c/Include/10.0.26100.0"
+  cp "$SC/um/wincrypt.h" "$WORK/sdk-overlay/"
+  cp "$SC/winrt/windows.graphics.capture.h" "$WORK/sdk-overlay/"
+  cp "$SC/um/dcomp.h" "$SC/um/dcompanimation.h" "$WORK/sdk-overlay/"
 fi
 ATL_X64="$WORK/atl/x64/Contents/VC/Tools/MSVC/14.44.35207/atlmfc/lib/x64"
 ATL_X86="$WORK/atl/x86/Contents/VC/Tools/MSVC/14.44.35207/atlmfc/lib/x86"
