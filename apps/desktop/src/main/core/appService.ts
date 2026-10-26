@@ -456,7 +456,8 @@ export class AppService {
     const host = this.hostFor(env)
     const fingerprint = await this.resolveFingerprint(env)
     // os_crypt 每环境密钥：DEK→HKDF（同账号跨设备一致，env 级隔离）→ 16B hex。
-    // 双端内核（mac/linux）派生密钥长度均为 16 字节（148 源码确认）
+    // 三端内核（mac/linux/win 补丁）均按 16 字节强校验并以此跨平台互解
+    // （win 漫游模式直接采用 mac/linux 的 v11 AES-CBC 线格式，见 kernel-build README）
     const osCryptKey =
       env.hosting === 'kernel' && this.dek
         ? Buffer.from(subkey(this.dek, `os-crypt:${envId}`).slice(0, 16)).toString('hex')

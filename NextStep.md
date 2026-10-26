@@ -12,8 +12,14 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-26，Windows 开发机 W1 完成）
+## 当前状态（快照，2026-10-26，Windows 开发机 W1+W2 完成）
 
+- **W2 已完成（win 端 os_crypt 补丁，2026-10-26）**：100-os-crypt-key.patch 补齐第四文件
+  `os_crypt_win.cc`——switch 注入 16B 密钥跳过 DPAPI/Local State；**漫游模式对齐 mac/linux
+  v11 线格式（AES-128-CBC/16B key/16 空格 IV）**，同一 profile 三平台互解；v10/DPAPI 原生
+  路径与无 switch 行为不变。对 googlesource 148 原始源码双通道验证（git apply + GNU patch）
+  干净应用、逐字节复现；顺带排掉补丁文件被 autocrlf 转 CRLF 的地雷（.gitattributes 补
+  `*.patch eol=lf`）。**核验结论：三端密钥均为 16B，产品侧 16B 派生本就正确**。
 - **W1 已完成（Windows 全链路验证通过，tag `v0.4.0-win-prepared`）**：builtin e2e 17/17 ·
   kernel-smoke(docker) 7/7 · kernel-smoke(native 官方 win 内核) 6/6 · e2e:fp 10/10 ·
   e2e:interop 13/13 · e2e:l2 7/7 · Go 单测全绿。kernelManager win 分支（下载/解压/自检）实战验证。
@@ -44,14 +50,22 @@
 
 ## 下一步（按优先级，Windows 开发机；迁移指南 docs/windows-migration.md）
 
-1. **W2 win 端 os_crypt 补丁**：`os_crypt_win.cc`（DPAPI 路径）加 `--os-crypt-key`，与 mac/linux 补丁（`scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch`）同构；基于 148 源码 `components/os_crypt/win/`。
-2. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：打齐三端补丁；mac x64 产物顺便在 CI 出。
-3. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台 → V0.4 正式发版。
-4. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
-5. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
+1. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：bootstrap 出
+   win 源码树（补丁已四文件齐，bootstrap.sh 的 patch 步骤直接可用）→ gn gen → autoninja；
+   三端补丁齐后 mac x64 产物顺便在 CI 出。**注意 win 段补丁尚未经过编译器检验**（apply
+   已验证，编译验证在 W3 源码树重放时完成）。
+2. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台（v11
+   线格式已三端对齐，PoC 直接按同 key 跨内核验证）→ V0.4 正式发版。
+3. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
+4. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
 
 ## 已完成归档
 
+- **[2026-10-26] W2 win 端 os_crypt 补丁**：`100-os-crypt-key.patch` 第四文件 `os_crypt_win.cc`
+  （InitWithExistingKey 注入 16B、漫游模式 v11 AES-CBC 线格式对齐 mac/linux、v10/DPAPI
+  原生路径保留）；googlesource 148 原始源码 git apply + GNU patch 双通道干净应用、
+  逐字节复现；补丁文件 CRLF 地雷修复（.gitattributes `*.patch eol=lf`）；三端密钥长度
+  核验（全 16B，产品侧派生无需改）。win 段待 W3 编译检验。
 - **[2026-10-26] W1 Windows 环境搭建 + 官方 win 内核全链路（tag `v0.4.0-win-prepared`）**：本地栈三件套落地（localstack 3.8.1 替 MinIO / Postgres 55432 规避端口冲突 / Go 1.26 工具链自拉）；验证矩阵全绿（builtin 17/17 · smoke-docker 7/7 · smoke-native 6/6 · fp 10/10 · interop 13/13 · l2 7/7 · Go 全绿）；kernelManager win 分支实战验证（含 KNOWN_BAD 版本规避）；Windows 十二坑修复入库（详见 docs/windows-migration.md「W1 完成纪要」）。
 - **[2026-10-17] V0.4-A 准备 + V0.4-C（生产硬化）**：os-crypt-key 补丁（mac/linux 双端）+ bootstrap/build 脚本 + KI-1 源码级实锤；ratelimit（令牌桶+429）+ USER_QUOTA_GB + health?deep + deploy 生产栈与 production.md。
 - **[2026-10-17] V0.4-B mac（安装包）**：electron-builder.yml + dist:mac/dist 脚本 + pnpm allowBuilds（electron-winstaller=false）；dmg 双架构构建与包内 e2e 验收。

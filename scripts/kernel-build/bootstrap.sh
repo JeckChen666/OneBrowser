@@ -31,8 +31,8 @@ grep -vE "^(tools/|build/)" domain_substitution.list > domain_substitution.build
 ./utils/domain_substitution.py apply -r domain_regex.list -f domain_substitution.build.list \
   -c "$WORK/build/domsubcache.tar.gz" "$WORK/build/src"
 
-# 4) OneBrowser 补丁（os_crypt 密钥注入）
-#    基于 148 原始文件 diff；ungoogled 补丁集不触及这三个文件，无冲突
+# 4) OneBrowser 补丁（os_crypt 密钥注入，mac/linux/win 三端 + 跨平台 switch 头）
+#    基于 148 原始文件 diff；ungoogled 补丁集不触及这四个文件，无冲突
 patch -d "$WORK/build/src" -p1 --forward \
   < "$(dirname "$0")/patches/onebrowser/100-os-crypt-key.patch"
 

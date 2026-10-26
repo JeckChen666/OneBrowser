@@ -1,3 +1,5 @@
 # Windows 克隆防护：shell 脚本必须 LF（CRLF 会让容器内 /bin/sh\r 解释器找不到，
 # 报 "exec /entrypoint.sh: no such file or directory"；fetch.sh 同理）
 *.sh text eol=lf
+# 补丁文件必须 LF：CRLF 补丁对 LF 源码 git apply/patch 上下文不匹配（静默不可应用）
+*.patch text eol=lf

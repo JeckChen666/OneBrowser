@@ -114,7 +114,7 @@ CDP 指纹断言全链路走通，tag `v0.4.0-win-prepared`。
 | 阶段 | 内容 | 说明 |
 |---|---|---|
 | W1 | 官方 win x64 内核跑通产品全链路（kernel-smoke/指纹 e2e） | ✅ **2026-10-26 完成**（见上「W1 完成纪要」） |
-| W2 | **win 端 os_crypt 补丁**（`os_crypt_win.cc` 的 DPAPI 路径加 `--os-crypt-key`） | 补丁的第三端（mac/linux 已写好：`scripts/kernel-build/patches/onebrowser/100-os-crypt-key.patch`）；参考 148 源码 `components/os_crypt/win/` |
+| W2 | **win 端 os_crypt 补丁**（`os_crypt_win.cc` 加 `--os-crypt-key`） | ✅ **2026-10-26 补丁完成**：`100-os-crypt-key.patch` 第四文件；漫游模式对齐 mac/linux v11 线格式（AES-128-CBC/16B）实现三平台互解；对 googlesource 148 双通道 apply 验证（git apply + GNU patch），编译检验留 W3 |
 | W3 | Windows 本机自建内核（VS Build Tools，官方支持）或 CI | 打上三端补丁；mac x64 产物也可顺便在 CI 出 |
 | W4 | os-crypt-roaming PoC（win 双 profile 拷贝互解）→ L2 全平台 | `apps/desktop/scripts/os-crypt-roaming-poc.mjs` 思路，改 Windows 进程模型 |
 
