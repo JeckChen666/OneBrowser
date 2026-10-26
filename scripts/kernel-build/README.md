@@ -95,6 +95,17 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
   免管理员拉 ATL 14.44 包（payload.vsix 用 7z 解），头进 overlay、atls.lib 目录进 shim LIB。
 - **python3 别名**：WindowsApps 的 python3.exe 是 Store 占位（exec_script 拿 9009）→
   bin/python3.exe 放真身；args.gn 里 `script_executable` 亦可。
+- **rc.exe**：资源编译器包装由 DEPS gcs hook 分发（build/toolchain/win/rc/win/ 只留 sha1）；
+  lite 树内 third_party/depot_tools 的 download_from_google_storage.py 是剪剩空壳（静默
+  无效）——必须用独立 clone 的 depot_tools 里的脚本下载。
+- **LLVM OOM**：默认 -j=逻辑核数（20），net/ 等 heavy TU（thin-LTO）单进程峰值 3-4GB，
+  47.7GB 内存扛不住集体峰值 → `-j12`（build-win.sh 已固化；内存更小的机器再降）。
+- **C11 threads.h（pthreadpool）**：既不在任何 Windows SDK，也只在 MSVC 14.38+ 的
+  include 里（本机 14.37 没有、22621 SDK 也没有）→ VS 引导器 `--layout` 免管理员拉
+  `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`，从各包 payload.vsix 组装 14.44
+  工具集树（CRT.Headers→include；CRT.x64/x86.Desktop→lib；**delayimp.lib 只在 Store 包、
+  oldnames.lib 在 Store 的 uwp/ 与 OneCore 包**，Store 版拷到 lib/x64 归位）。shim 的
+  MSVC 指向组装树（bootstrap-win.sh `ensure_msvc_ge_1440` 已固化）。
 
 ## 构建现场（2026-10-18 起，进度；10-25 已暂停存档）
 

@@ -99,6 +99,10 @@ EOF
   git clone --depth 1 https://chromium.googlesource.com/external/github.com/microsoft/DirectX-Headers.git third_party/dxh-tmp
   (cd third_party/dxh-tmp && git fetch --depth 1 origin 62c23d5ec700659453c6fe89d296554b2a5e7edc \
     && git checkout FETCH_HEAD) && mv third_party/dxh-tmp third_party/microsoft_dxheaders/src; }
+# rc.exe（资源编译器包装，DEPS gcs；树内 depot_tools 是剪剩空壳，必须用独立 clone 的脚本）
+[ -x build/toolchain/win/rc/win/rc.exe ] || \
+  python "$WORK/depot_tools/download_from_google_storage.py" --no_resume \
+    --bucket chromium-browser-clang/rc -s build/toolchain/win/rc/win/rc.exe.sha1
 
 # ---------- 5) rust GN 规则（gnrt） ----------
 if [ ! -f third_party/rust/windows_x86_64_msvc/v0_52/BUILD.gn ] || \
@@ -111,13 +115,50 @@ if [ ! -f third_party/rust/windows_x86_64_msvc/v0_52/BUILD.gn ] || \
   ./tools/crates/gnrt/target/release/gnrt.exe gen --for-std=third_party/rust-toolchain/lib/rustlib/src/rust
 fi
 
+# ---------- 6b) MSVC 14.44 组装（当本机 MSVC < 14.38 时必需） ----------
+# C11 <threads.h>（pthreadpool 需要）既不在任何 Windows SDK、也只在 MSVC 14.38+ 的
+# include 里；delayimp.lib 只在 CRT 的 Store 包、oldnames.lib 在 Store(uwp)/OneCore 包。
+# 流程：vs_BuildTools.exe --layout（免管理员）拉 Microsoft.VisualStudio.Component.VC.Tools.x86.x64，
+# 再从各包 payload.vsix 组装 include+lib（真实 VS 安装不受影响）。
+ensure_msvc_ge_1440() {
+  local msvc="$1"
+  [ -f "$msvc/include/threads.h" ] && return 0
+  local V=14.44.35207
+  local L="$WORK/vs-vctools-layout"
+  local M="$WORK/msvc1444/Contents/VC/Tools/MSVC/$V"
+  if [ ! -f "$M/include/threads.h" ]; then
+    [ -x "$L/vs_BuildTools.exe" ] || cp "$WORK/vs_BuildTools.exe" "$L/" 2>/dev/null || {
+      mkdir -p "$L"; curl -sL -o "$WORK/vs_BuildTools.exe" https://aka.ms/vs/17/release/vs_BuildTools.exe; }
+    cat > "$WORK/vs-layout-vctools.bat" <<EOF
+@echo off
+$(cygpath -w "$WORK/vs_BuildTools.exe") --layout "$(cygpath -w "$L")" --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --quiet --norestart --wait
+EOF
+    cmd //c "$(cygpath -w "$WORK/vs-layout-vctools.bat")"
+    local S="$SEVENZIP" LDIR="$L"
+    pk() { ls "$LDIR" | grep "^$1" | head -1; }
+    "$S" x "$LDIR/$(pk 'Microsoft.VC.14.44.17.14.CRT.Headers.base')/payload.vsix" -o"$WORK/msvc1444" "-i!Contents/VC/Tools/MSVC/$V/include/*" -y -bso0 >/dev/null
+    "$S" x "$LDIR/$(pk 'Microsoft.VC.14.44.17.14.CRT.x64.Desktop.base')/payload.vsix" -o"$WORK/msvc1444" "-i!Contents/VC/Tools/MSVC/$V/lib/x64/*" -y -bso0 >/dev/null
+    "$S" x "$LDIR/$(pk 'Microsoft.VC.14.44.17.14.CRT.x86.Desktop.base')/payload.vsix" -o"$WORK/msvc1444" "-i!Contents/VC/Tools/MSVC/$V/lib/x86/*" -y -bso0 >/dev/null
+    "$S" x "$LDIR/$(pk 'Microsoft.VC.14.44.17.14.CRT.x64.Store.base')/payload.vsix" -o"$WORK/msvc1444" "-i!Contents/VC/Tools/MSVC/$V/lib/x64/*" -y -bso0 >/dev/null
+    "$S" x "$LDIR/$(pk 'Microsoft.VC.14.44.17.14.CRT.x86.Store.base')/payload.vsix" -o"$WORK/msvc1444" "-i!Contents/VC/Tools/MSVC/$V/lib/x86/*" -y -bso0 >/dev/null
+    cp "$M/lib/x64/uwp/oldnames.lib" "$M/lib/x64/oldnames.lib" 2>/dev/null || true
+    cp "$M/lib/x86/uwp/oldnames.lib" "$M/lib/x86/oldnames.lib" 2>/dev/null || true
+  fi
+  echo "$WORK/msvc1444/Contents/VC/Tools/MSVC/$V"
+}
+
 # ---------- 6) gn 自举（完整 MSVC 工具集 + CL=/utf-8 + mt.exe） ----------
-detect_msvc() {  # 找到带 include/ 的完整工具集（默认装只带运行库的残件会骗过粗检测）
+detect_msvc() {  # 优先 14.44 组装树（threads.h），否则找带 include/ 的完整本机工具集
+  local assembled
+  assembled=$(ensure_msvc_ge_1440 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.37.32822' 2>/dev/null || true)
+  if [ -n "$assembled" ] && [ -f "$(cygpath -u "$assembled")/include/threads.h" ]; then
+    echo "$assembled"; return
+  fi
   for d in "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC"/* \
            "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"/*; do
-    [ -d "$d/include" ] && { echo "$d"; return; }
+    [ -d "$d/include" ] && [ -f "$d/include/threads.h" ] && { cygpath -w "$d"; return; }
   done
-  echo "未找到完整 MSVC 工具集（需 include/+lib/）——VS Installer 补『MSVC v143 生成工具』" >&2
+  echo "未找到含 threads.h 的 MSVC（需 14.38+ 或走 VS layout 组装 14.44）" >&2
   return 1
 }
 if [ ! -x buildtools/win/gn.exe ]; then

@@ -16,7 +16,7 @@ set GYP_MSVS_OVERRIDE_PATH=$(cygpath -w "$WORK/vs-shim" | sed 's/\\\\/\\\\/g')
 set WINDOWSSDKVERSION=10.0.22621.0
 set "PATH=$(cygpath -w "$WORK/bin");C:\\Python313;$(cygpath -w "$WORK/depot_tools");%PATH%"
 cd /d $(cygpath -w "$SRC")
-$(cygpath -w "$WORK/bin/ninja.exe") -C out\\OneBrowser chrome
+$(cygpath -w "$WORK/bin/ninja.exe") -C out\\OneBrowser -j12 chrome
 EOF
 cmd //c "$(cygpath -w "$WORK/ninja-build.bat")"
 echo "产物: $SRC/out/OneBrowser/chrome.exe"
