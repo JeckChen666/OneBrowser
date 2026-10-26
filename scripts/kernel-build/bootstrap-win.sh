@@ -103,6 +103,11 @@ EOF
 [ -x build/toolchain/win/rc/win/rc.exe ] || \
   python "$WORK/depot_tools/download_from_google_storage.py" --no_resume \
     --bucket chromium-browser-clang/rc -s build/toolchain/win/rc/win/rc.exe.sha1
+# microsoft_webauthn（DEPS git 依赖，checkout_win）
+[ -f third_party/microsoft_webauthn/src/webauthn.h ] || { git clone --depth 1 \
+  https://chromium.googlesource.com/external/github.com/microsoft/webauthn.git third_party/wa-tmp
+  (cd third_party/wa-tmp && git fetch --depth 1 origin c3ed95fd7603441a0253c55c14e79239cb556a9f \
+    && git checkout FETCH_HEAD) && mv third_party/wa-tmp third_party/microsoft_webauthn/src; }
 
 # ---------- 5) rust GN 规则（gnrt） ----------
 if [ ! -f third_party/rust/windows_x86_64_msvc/v0_52/BUILD.gn ] || \
