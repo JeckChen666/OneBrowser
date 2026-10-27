@@ -12,17 +12,23 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-27，V0.4.2 打包验收三绿待推送）
+## 当前状态（快照，2026-10-27，已推送远端；V0.4.2 含品牌图标）
 
-- **V0.4.2 安装包已验收（本工作单元，tag `v0.4.2`）**：含桌面 UI/UX 优化整合 +
-  服务端运维工作台。打包形态三绿：静默安装 → e2e 17/17 → browser-smoke 3/3 →
-  screenshot-tour 六站全走确定性取帧。**排掉两个打包形态深坑**（均已固化修复）：
+- **已推送远端**：`git push origin main --tags` 完成——main 全部提交 + v0.4.0 /
+  v0.4.0-win-prepared / v0.4.1 / v0.4.2 四个 tag 现于 github.com/JeckChen666/OneBrowser。
+- **品牌图标已落地（本工作单元）**：`build/icon.svg`（蓝底白色指纹涡纹×地球经纬，
+  椭圆缺口同心环设计）→ `scripts/gen-icon.mjs`（sharp 渲染 512px）→ `build/icon.png`
+  → electron-builder 自动转 ico/icns。默认 Electron 图标警告消失，exe 内嵌图标已抽取
+  目检（32px 可辨）；带图标安装包重出并重跑打包验收三绿（e2e 17/17 · bsmoke 3/3 ·
+  tour 0，六站 frame-sub）。
+- **V0.4.2 打包验收三绿（tag `v0.4.2`）**：含桌面 UI/UX 优化整合 +
+  服务端运维工作台。**排掉两个打包形态深坑**（均已固化修复）：
   ①截图模式 GPU 合成器不出帧抛 UnknownVizError（capturePage 抛异常挂死流水线）
   → 截图模式禁用硬件加速 + capturePng 重试 + tour 失败保底 app.exit(1) 不挂死；
   ②后台节流停发帧：窗口被判后台后合成器不出新帧，capturePage 返回旧帧（overlay
   随机丢失）、beginFrameSubscription 无帧——`backgroundThrottling: false` + moveTop
-  后订阅恢复正常，六站全部 via=frame-sub。tour 升级为「条件等待（等切页/等 overlay/
-  等行出现）+ 帧订阅取图 + 沉降兜底」的确定性流水线；固定 sleep 已淘汰。
+  后订阅恢复正常，六站全部 via=frame-sub。tour 升级为「条件等待 + 帧订阅取图 +
+  沉降兜底」的确定性流水线；固定 sleep 已淘汰。
 - **服务端运维工作台已完成（提交 4494a6c）**：`server/internal/admin`（Go 包 + go:embed
   单页，零前端构建）——设 `ADMIN_TOKEN` 后开放 `https://<DOMAIN>/admin/`，未设则路由
   整体不存在。只读四视图（概览/账号/环境/快照）；口令恒时比较 + HttpOnly cookie（12h）
@@ -58,17 +64,16 @@
 
 ## 下一步（按优先级）
 
-1. **推送远端**：`git push origin main --tags`（v0.4.0 / v0.4.0-win-prepared / v0.4.1 及全部提交仍在本地）。
-2. **0.4.2 安装包重出 + 打包形态验收**（含桌面 UI/UX 优化；dist:win → 静默安装 → e2e + tour 截图）；
-   随后：代码签名证书（现未签名，SmartScreen 会拦）、正式图标、electron-updater 自动更新。
-3. **Win 原生 L2（不阻塞）**：os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游；
+1. **代码签名证书**（需用户决策采购）：现未签名，SmartScreen 会拦；签发后 electron-builder.yml
+   补 win.sign 配置即可（图标管线已闭环）。正式图标 ✅。
+2. **os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游**（外发动作，PR 文案需确认）；
    接受则 Windows L2 免费跟随官方发布；拒绝则 W3 存档的自建内核作为可选高级件
    （构建现场 `D:/ob-kernel-build` 停在 chrome.dll 链接段，`bootstrap-win.sh` 可复现，
    ninja 续跑即可出包）。
-4. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy），
+3. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy），
    含 ADMIN_TOKEN 开通运维工作台的实操验证。
-5. **V0.5 规划**：增量快照、自动更新、团队协作；可选：工作台增写操作（账号停用/配额调整，
-   需 users 表加列 + auth 中间件拦截）。
+4. **V0.5 规划**：增量快照、electron-updater 自动更新、团队协作；可选：工作台增写操作
+  （账号停用/配额调整，需 users 表加列 + auth 中间件拦截）。
 
 ## 已完成归档
 
