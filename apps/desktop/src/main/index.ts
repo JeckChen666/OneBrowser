@@ -16,6 +16,11 @@ const e2eMode =
   process.argv.includes('--screenshot-tour') ||
   process.argv.includes('--screenshot-loggedin')
 
+// 截图/巡航模式改软件合成：GPU 合成器未出帧时 capturePage 会抛 UnknownVizError（打包形态实测）
+if (process.argv.includes('--screenshot') || process.argv.includes('--screenshot-tour') || process.argv.includes('--screenshot-loggedin')) {
+  app.disableHardwareAcceleration()
+}
+
 let svc: AppService
 let managerWin: BrowserWindow | null = null
 

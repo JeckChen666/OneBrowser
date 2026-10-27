@@ -12,24 +12,31 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-27，V0.4.1 已发版；服务端运维工作台完成）
+## 当前状态（快照，2026-10-27，V0.4.2 打包验收三绿待推送）
 
-- **服务端运维工作台已完成（本工作单元）**：`server/internal/admin`（Go 包 + go:embed 单页，
-  零前端构建）——设 `ADMIN_TOKEN` 后开放 `https://<DOMAIN>/admin/`，未设则路由整体不存在。
-  只读四视图：概览（账号/环境/快照计数、存储水位、db/s3 依赖、上传中残留、在线会话、治理
-  参数）、账号（注册时间/设备/环境/快照占用）、环境（模式标签/基线大小与时间/租约占用方）、
-  快照（状态/设备/大小）。**鉴权**：口令恒时比较 → HttpOnly cookie（12h，HTTPS 下自动
-  Secure），亦支持 `Bearer <ADMIN_TOKEN>` 供 curl；登录端点复用认证限流。**边界**：E2E 密文
-  （指纹/代理/种子/快照载荷）不可见、无任何写操作。部署件：prod compose `ADMIN_TOKEN` 透传、
-  .env.example、production.md「运维工作台」节。Go 测试新增 admin 包（鉴权流/数据形状/页面）。
-  **验证**：全量 Go 测试绿；本机实跑（ADMIN_TOKEN=dev-admin-123）浏览器四 tab 截图目检通过；
-  期间修掉 overview 治理参数「字段声明未赋值」回归（测试已锁定）。
-- **UI/UX 交互优化已完成（上一工作单元，提交 8e401ee）**：登录页注册态强制「主密码不可找回」
-  警示+勾选门禁；新建/编辑对话框说明卡片化，编辑接入指纹三件套/种子/代理清除/承载切换
-  （主进程 updateEnv 早已支持、UI 首次接线，seed 走 isValidSeed 防 KI-1）；环境详情抽屉；
-  快照丢弃关闭二次确认/登出确认/每行 busy；内核 popover（进度条/来源/导入/提醒点）；空状态
-  三步引导；帮助弹卡；错误信息剥 IPC 包装；`--screenshot-tour` 六站巡航。typecheck 双绿 ·
-  e2e 17/17 · 六站截图目检。
+- **V0.4.2 安装包已验收（本工作单元，tag `v0.4.2`）**：含桌面 UI/UX 优化整合 +
+  服务端运维工作台。打包形态三绿：静默安装 → e2e 17/17 → browser-smoke 3/3 →
+  screenshot-tour 六站全走确定性取帧。**排掉两个打包形态深坑**（均已固化修复）：
+  ①截图模式 GPU 合成器不出帧抛 UnknownVizError（capturePage 抛异常挂死流水线）
+  → 截图模式禁用硬件加速 + capturePng 重试 + tour 失败保底 app.exit(1) 不挂死；
+  ②后台节流停发帧：窗口被判后台后合成器不出新帧，capturePage 返回旧帧（overlay
+  随机丢失）、beginFrameSubscription 无帧——`backgroundThrottling: false` + moveTop
+  后订阅恢复正常，六站全部 via=frame-sub。tour 升级为「条件等待（等切页/等 overlay/
+  等行出现）+ 帧订阅取图 + 沉降兜底」的确定性流水线；固定 sleep 已淘汰。
+- **服务端运维工作台已完成（提交 4494a6c）**：`server/internal/admin`（Go 包 + go:embed
+  单页，零前端构建）——设 `ADMIN_TOKEN` 后开放 `https://<DOMAIN>/admin/`，未设则路由
+  整体不存在。只读四视图（概览/账号/环境/快照）；口令恒时比较 + HttpOnly cookie（12h）
+  + Bearer 双通道；登录复用认证限流；E2E 密文不可见边界写入页面与 production.md。
+  全量 Go 测试绿；本机实跑浏览器四 tab 目检；修复 overview 治理参数「声明未赋值」回归。
+- **UI/UX 交互优化已完成（提交 8e401ee）**：注册主密码不可找回警示+勾选门禁；新建/编辑
+  对话框说明卡片化，编辑接入指纹三件套/种子/代理清除/承载切换；环境详情抽屉；快照丢弃
+  关闭二次确认/登出确认/每行 busy；内核 popover；空状态三步引导；错误信息剥 IPC 包装。
+- **W3 已砍削暂停（范围决策）**：win 自建内核构建现场存档 `D:/ob-kernel-build`
+  （停在 chrome.dll 链接段，`bootstrap-win.sh` 全程可复现，ninja 续跑即可出包）。
+- **V0.4.0/V0.4.1 已发版**：win 安装包两条线验收过（0.4.0 双绿、0.4.1 双绿）；150 win
+  内核 canvas 死锁 KNOWN_BAD 规避选 148；Edge 启动器交接与 156 flatten 移除两坑修复。
+- **运行环境**：server(:8787，现带 ADMIN_TOKEN=dev-admin-123 于后台跑) /
+  test-site(:18080) / Postgres(:55432) / localstack S3(:4566) 本机常驻。
 - **V0.4.1 已发版（tag `v0.4.1`）**：标准浏览器承载（本机 Edge/Chrome，无指纹免下载）；
   打包形态双绿（e2e 17/17 + browser-smoke 3/3）；Edge 启动器进程交接与 156 flatten 移除
   两大坑修复（attachPageDirect 页级直连 ws）。
@@ -64,6 +71,12 @@
    需 users 表加列 + auth 中间件拦截）。
 
 ## 已完成归档
+
+- **[2026-10-27] V0.4.2 打包验收三绿（tag `v0.4.2`）**：版本 0.4.1→0.4.2，dist:win 出包；
+  打包形态静默安装 → e2e 17/17 → browser-smoke 3/3 → screenshot-tour 六站确定性取帧全过。
+  两个深坑修复入库：截图模式 UnknownVizError（GPU 不出帧抛异常挂死流水线）→ 禁硬件加速 +
+  重试 + 失败保底退出；后台节流停发帧（overlay 随机丢失、订阅无帧）→ backgroundThrottling
+  关闭 + moveTop，帧订阅恢复。tour 流水线升级为条件等待 + 帧订阅 + 沉降兜底。
 
 - **[2026-10-27] 服务端运维工作台（/admin，只读）**：`server/internal/admin` + 内嵌单页
   （go:embed，零前端构建）；ADMIN_TOKEN 门禁（未设=不挂载）、恒时比较、HttpOnly cookie、
