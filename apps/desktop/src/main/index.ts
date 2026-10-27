@@ -172,6 +172,15 @@ app.whenReady().then(async () => {
     return
   }
 
+  if (process.argv.includes('--browser-smoke')) {
+    const { runBrowserSmoke } = await import('./kernel-smoke')
+    const svcB = new AppService(serverUrl, (e) => {
+      if (e.type === 'kernel' && e.status.progress) console.log(`[kernel] ${e.status.progress.status} ${e.status.progress.message || ''}`)
+    })
+    const code = await runBrowserSmoke(svcB)
+    app.exit(code)
+    return
+  }
   if (process.argv.includes('--kernel-smoke')) {
     const { runKernelSmoke, runKernelSmokeDocker } = await import('./kernel-smoke')
     const svc0 = new AppService(serverUrl, (e) => {

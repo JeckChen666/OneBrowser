@@ -98,6 +98,41 @@ async function waitExit(host: ExternalKernelHost, envId: string): Promise<void> 
   for (let i = 0; i < 40 && host.isRunning(envId); i++) await sleep(250)
 }
 
+/** 标准浏览器承载冒烟：探测本机 Edge/Chrome → 以 hosting=browser 打开 /fp →
+ *  断言 UA 为真实浏览器（含 Edg/ 或非指纹内核版本号）且 CDP 数据面可用 */
+export async function runBrowserSmoke(svc: AppService): Promise<number> {
+  const started = Date.now()
+  const { detectStandardBrowser } = await import('./core/kernelManager')
+  const b = detectStandardBrowser()
+  if (!b) {
+    log('未检测到本机 Edge/Chrome')
+    fail++
+    return 1
+  }
+  log(`标准浏览器：${b.name} → ${b.exePath}`)
+  check('探测到本机标准浏览器', true)
+
+  const host = new ExternalKernelHost(new NativeKernelLauncher(async (args) => {
+    if (!args.includes('--onebrowser-hosting=browser')) throw new Error('标记开关缺失')
+    return b.exePath
+  }))
+  const env = mockEnv('smoke-std', '11111111')
+  env.hosting = 'browser'
+  const re = await host.open(env, {})
+  if (re.kind !== 'kernel') throw new Error('预期 kernel 承载管线')
+  await sleep(2500)
+  const fp = await readFp(re.page)
+  log(`UA：${fp.ua}`)
+  check('UA 为真实标准浏览器（含 Edg/ 或 Crmo）', /Edg\//.test(fp.ua) || /Chrome\//.test(fp.ua))
+  check('CDP 数据面可用（cookie round-trip 前置：页面响应）', !!fp.ua)
+  host.closeWindow('smoke-std')
+  await waitExit(host, 'smoke-std')
+
+  console.log(`
+===== browser-smoke 完成：PASS=${pass} FAIL=${fail}（${((Date.now() - started) / 1000).toFixed(1)}s）=====`)
+  return fail === 0 ? 0 : 1
+}
+
 export async function runKernelSmoke(svc: AppService): Promise<number> {
   const started = Date.now()
 

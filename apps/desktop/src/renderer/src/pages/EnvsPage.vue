@@ -38,7 +38,7 @@
             <div class="env-name">
               <b>{{ row.env.name }}</b>
               <el-tag size="small" :type="row.env.hosting === 'kernel' ? 'primary' : 'info'" effect="plain">
-                {{ row.env.hosting === 'kernel' ? '指纹内核' : '内置' }}
+                {{ row.env.hosting === 'kernel' ? '指纹内核' : row.env.hosting === 'browser' ? '标准浏览器' : '内置' }}
               </el-tag>
               <el-tag size="small" :type="row.env.mode === 'snapshot' ? 'success' : 'warning'">
                 {{ row.env.mode === 'snapshot' ? '模式一 · 快照' : '模式二 · 互斥' }}
@@ -109,6 +109,7 @@
         <el-form-item label="承载" required>
           <el-radio-group v-model="form.hosting">
             <el-radio value="kernel">指纹内核（推荐，需下载内核）</el-radio>
+            <el-radio value="browser">标准浏览器（本机 Edge/Chrome，无指纹，免下载）</el-radio>
             <el-radio value="builtin">内置轻量（Electron，无指纹）</el-radio>
           </el-radio-group>
         </el-form-item>

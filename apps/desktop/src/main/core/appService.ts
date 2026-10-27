@@ -6,7 +6,7 @@ import { LeaseAgent } from './leaseAgent'
 import { BrowserHost } from './browserHost'
 import { ExternalKernelHost } from './externalKernelHost'
 import { DockerKernelLauncher, NativeKernelLauncher } from './kernelLauncher'
-import { KernelManager } from './kernelManager'
+import { KernelManager, detectStandardBrowser } from './kernelManager'
 import { LocalStore } from './localStore'
 import type { Host, RunningEnv } from './host'
 import {
@@ -98,7 +98,13 @@ export class AppService {
     this.kernelHost = process.env.ONEBROWSER_KERNEL_DOCKER === '1'
       ? new ExternalKernelHost(new DockerKernelLauncher(process.env.ONEBROWSER_KERNEL_IMAGE || 'onebrowser-kernel-smoke'))
       : new ExternalKernelHost(
-          new NativeKernelLauncher(async () => {
+          new NativeKernelLauncher(async (args) => {
+            if (args.includes('--onebrowser-hosting=browser')) {
+              // 标准浏览器承载：用本机已装的 Edge/Chrome，无需下载
+              const b = detectStandardBrowser()
+              if (!b) throw new Error('未检测到本机 Edge/Chrome（标准浏览器模式需要）')
+              return b.exePath
+            }
             const info = await this.kernelManager.ensureReady()
             if (!info.exePath) throw new Error('内核不可用')
             return info.exePath
@@ -118,7 +124,7 @@ export class AppService {
 
   /** 环境对应的承载 */
   private hostFor(env: Pick<EnvConfig, 'hosting'>): Host {
-    return env.hosting === 'kernel' ? this.kernelHost : this.host
+    return env.hosting === 'kernel' || env.hosting === 'browser' ? this.kernelHost : this.host
   }
 
   /** 任一承载运行中 */
@@ -358,7 +364,7 @@ export class AppService {
         id: row.id,
         name: row.name,
         mode: row.mode,
-        hosting: cfg.hosting === 'kernel' ? 'kernel' : 'builtin', // 旧环境缺省 builtin，保持兼容
+        hosting: cfg.hosting === 'kernel' || cfg.hosting === 'browser' ? cfg.hosting : 'builtin', // 旧环境缺省 builtin，保持兼容
         homepage: cfg.homepage || '',
         seed,
         proxy: cfg.proxy,
@@ -394,7 +400,7 @@ export class AppService {
       throw new Error('指纹种子必须是 1~2147483647 的整数')
     }
     const id = randomId()
-    const hosting = input.hosting === 'builtin' ? 'builtin' : 'kernel'
+    const hosting = input.hosting === 'builtin' ? 'builtin' : input.hosting === 'browser' ? 'browser' : 'kernel'
     const configEnc = await sealConfig(this.dek!, id, {
       hosting,
       homepage: input.homepage,
@@ -405,7 +411,7 @@ export class AppService {
     })
     await this.cloud.createEnv({ id, name: input.name, mode: input.mode, configEnc })
     await this.refreshEnvs()
-    this.notify('success', `环境「${input.name}」已创建（${hosting === 'kernel' ? '指纹内核' : '内置轻量'}）`)
+    this.notify('success', `环境「${input.name}」已创建（${hosting === 'kernel' ? '指纹内核' : hosting === 'browser' ? '标准浏览器' : '内置轻量'}）`)
   }
 
   async updateEnv(
@@ -464,6 +470,10 @@ export class AppService {
         : undefined
 
     // kernel 承载：先确保内核就绪（可能触发首次下载）；docker 模式无需原生内核
+    if (env.hosting === 'browser') {
+      if (this.kernelDockerMode) throw new Error('标准浏览器模式使用本机 Edge/Chrome，不支持 Docker 内核')
+      if (!detectStandardBrowser()) throw new Error('未检测到本机 Edge/Chrome（标准浏览器模式需要）')
+    }
     if (env.hosting === 'kernel' && !this.kernelDockerMode && !this.kernelManager.status().ready) {
       this.setPhase(envId, 'downloading-kernel', '准备指纹内核（首次需下载，约 200MB）…')
       await this.kernelManager.ensureReady()

@@ -224,6 +224,47 @@ export async function attachPage(port: number, createUrl = 'about:blank'): Promi
   return { conn, session: new PageSession(conn, att.sessionId), targetId: target.id }
 }
 
+/** 直连页面会话：页面级 ws 本身即会话（无 sessionId 路由）。
+ *  Edge 156+ 已移除 browser-ws 上 flatten 会话的页面域命令路由（'Page.enable' wasn't found），
+ *  标准浏览器承载必须走此路径；fingerprint 内核继续用 flatten（attachPage）。 */
+export class DirectSession implements CanSend {
+  constructor(private conn: CdpConnection) {}
+
+  send<T = any>(method: string, params?: Record<string, unknown>): Promise<T> {
+    return this.conn.send<T>(method, params)
+  }
+
+  on(method: string, handler: (params: unknown) => void): void {
+    this.conn.on(method, handler)
+  }
+}
+
+/** 页面级直连 attach（标准浏览器承载用）：与 attachPage 同返回形状。
+ *  复用「等初始导航 + 渲染器稳定窗口」逻辑；后续 localStorage 等临时 tab 的
+ *  页面级 ws 用法与本路径一致，已在 V0.2.0-S3 验证过。 */
+export async function attachPageDirect(port: number): Promise<{ conn: CdpConnection; session: DirectSession; targetId: string }> {
+  console.log(`[cdp] attachPageDirect port=${port}（page-level direct）`)
+  let target = (await listTargets(port)).find((t) => t.type === 'page')
+  if (!target || !target.url || target.url === 'about:blank' || target.url === '') {
+    const start = Date.now()
+    while (Date.now() - start < 12000) {
+      await new Promise((r) => setTimeout(r, 500))
+      const fresh = (await listTargets(port)).find((t) => t.id === target?.id) || (await listTargets(port)).find((t) => t.type === 'page')
+      if (fresh && fresh.url && fresh.url !== 'about:blank' && fresh.url !== '') {
+        target = fresh
+        break
+      }
+    }
+  }
+  if (!target) throw new Error('标准浏览器未产生页面 target')
+  await new Promise((r) => setTimeout(r, 4000))
+  const conn = new CdpConnection(target.webSocketDebuggerUrl!)
+  await conn.ready()
+  await conn.send('Page.enable')
+  console.log(`[cdp] direct-attached target=${target.id.slice(0, 8)} url=${target.url}`)
+  return { conn, session: new DirectSession(conn), targetId: target.id }
+}
+
 /** 优雅关闭整个浏览器进程 */
 export async function browserClose(port: number): Promise<void> {
   const conn = new CdpConnection(await browserWsUrl(port))

@@ -30,27 +30,60 @@ function userDataDirFromArgs(args: string[]): string | undefined {
 }
 
 export class NativeKernelLauncher implements KernelLauncher {
-  constructor(private exeProvider: () => Promise<string>) {}
+  // exeProvider 可按启动参数区分环境形态（如标准浏览器模式带 --onebrowser-hosting=browser 标记）
+  constructor(private exeProvider: (args: string[]) => Promise<string>) {}
 
   async launch(args: string[], onExit: () => void): Promise<KernelLaunch> {
-    const exe = await this.exeProvider()
+    const exe = await this.exeProvider(args)
     const port = await freePort()
     const proc = spawn(exe, [...args, `--remote-debugging-port=${port}`], { stdio: 'ignore' })
-    proc.once('exit', onExit)
     await waitEndpoint(port)
+    // Edge/Chrome 的启动器进程可能立即 exit(0)（handoff），真实浏览器在接管进程里
+    // 继续监听同一端口——进程句柄不可作为存活依据。生命周期改锚定 CDP 端口存活；
+    // spawn 进程退出（code 0）后留出移交稳定窗口，避免 attach 到旧进程的端点。
+    await new Promise((r) => setTimeout(r, 1200))
+    const handoff = proc.exitCode !== null
+    if (handoff) await new Promise((r) => setTimeout(r, 1500))
+    let stopped = false
+    const watcher = setInterval(() => {
+      if (stopped) return
+      fetch(`http://127.0.0.1:${port}/json/version`)
+        .then((r) => {
+          if (!r.ok) throw new Error(String(r.status))
+        })
+        .catch(() => {
+          if (!stopped) {
+            stopped = true
+            clearInterval(watcher)
+            onExit()
+          }
+        })
+    }, 1000)
     return {
       port,
       profileDir: userDataDirFromArgs(args),
       quiesce: (fn) => fn(), // 原生进程冻结未实现（原生 L2 暂不支持，见 v0.3.0 计划）
       stop: async () => {
+        stopped = true
+        clearInterval(watcher)
         await browserClose(port).catch(() => undefined)
         setTimeout(() => {
           if (proc.exitCode === null) proc.kill('SIGKILL')
         }, 4000)
+        // 移交场景下 spawn 句柄已死但接管进程仍在：等端点真正消失
         await new Promise<void>((resolve) => {
-          if (proc.exitCode !== null) return resolve()
-          proc.once('exit', () => resolve())
-          setTimeout(resolve, 6000)
+          const t = setInterval(() => {
+            fetch(`http://127.0.0.1:${port}/json/version`)
+              .then(() => undefined)
+              .catch(() => {
+                clearInterval(t)
+                resolve()
+              })
+          }, 500)
+          setTimeout(() => {
+            clearInterval(t)
+            resolve()
+          }, 8000)
         })
       }
     }

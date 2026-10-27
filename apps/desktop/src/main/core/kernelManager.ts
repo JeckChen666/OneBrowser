@@ -353,6 +353,47 @@ export class KernelManager {
   }
 }
 
+export interface StandardBrowser { exePath: string; name: 'Edge' | 'Chrome' }
+
+/** 探测本机已安装的标准浏览器（标准内核模式用，无需下载）。
+ *  Windows 自带 Edge；Chrome 为可选。路径用正斜杠（Windows API 兼容，免转义坑）。 */
+export function detectStandardBrowser(): StandardBrowser | null {
+  const pf = process.env.ProgramFiles || 'C:/Program Files'
+  const pf86 = process.env['ProgramFiles(x86)'] || pf
+  const lad = process.env.LOCALAPPDATA || ''
+  const candidates: Array<{ path: string; name: 'Edge' | 'Chrome' }> =
+    process.platform === 'win32'
+      ? [
+          { path: `${pf86}/Microsoft/Edge/Application/msedge.exe`, name: 'Edge' },
+          { path: `${pf}/Microsoft/Edge/Application/msedge.exe`, name: 'Edge' },
+          { path: `${lad}/Microsoft/Edge/Application/msedge.exe`, name: 'Edge' },
+          { path: `${pf}/Google/Chrome/Application/chrome.exe`, name: 'Chrome' },
+          { path: `${pf86}/Google/Chrome/Application/chrome.exe`, name: 'Chrome' },
+          { path: `${lad}/Google/Chrome/Application/chrome.exe`, name: 'Chrome' }
+        ]
+      : process.platform === 'darwin'
+        ? [
+            { path: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', name: 'Edge' },
+            { path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', name: 'Chrome' }
+          ]
+        : [
+            { path: '/usr/bin/microsoft-edge-stable', name: 'Edge' },
+            { path: '/usr/bin/microsoft-edge', name: 'Edge' },
+            { path: '/usr/bin/google-chrome-stable', name: 'Chrome' },
+            { path: '/usr/bin/google-chrome', name: 'Chrome' },
+            { path: '/usr/bin/chromium-browser', name: 'Chrome' },
+            { path: '/usr/bin/chromium', name: 'Chrome' }
+          ]
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c.path)) return { exePath: c.path, name: c.name }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null
+}
+
 /** 找一个空闲本地端口 */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

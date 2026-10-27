@@ -7,7 +7,7 @@ import { randomId } from './e2e'
 import type { KernelLauncher } from './kernelLauncher'
 import type { EnvConfig } from '@shared/types'
 import type { Host, KernelRunningEnv, OpenOptions, RunningEnv } from './host'
-import { attachPage, CdpConnection, closeTab, newTab } from './cdp'  // CdpConnection 用于临时标签页（不跨进程切换，页面级 ws 安全）
+import { attachPage, attachPageDirect, CdpConnection, closeTab, newTab } from './cdp'  // CdpConnection 用于临时标签页（不跨进程切换，页面级 ws 安全）
 import { tarDir } from './profileArchive'
 import type { StructuredData } from './dataPlane'
 
@@ -80,12 +80,18 @@ export class ExternalKernelHost implements Host {
     const startUrl = env.homepage && /^https?:/.test(env.homepage) ? env.homepage : 'about:blank'
     const args: string[] = [
       `--user-data-dir=${userDataDir}`,
-      `--fingerprint=${env.seed}`,
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
       startUrl
     ]
+    if (env.hosting === 'browser') {
+      // 标准浏览器承载（系统 Edge/Chrome）：未知开关会被 Chromium 静默忽略，
+      // 此标记仅供 NativeKernelLauncher 选择可执行文件，无内核副作用
+      args.splice(1, 0, '--onebrowser-hosting=browser')
+    } else {
+      args.splice(1, 0, `--fingerprint=${env.seed}`)
+    }
     const fp = opts.fingerprint
     if (fp?.platform) args.push(`--fingerprint-platform=${fp.platform}`)
     if (fp?.timezone) args.push(`--timezone=${fp.timezone}`)
@@ -127,7 +133,8 @@ export class ExternalKernelHost implements Host {
     }
     const launch = await this.launcher.launch(args, handleExit)
     try {
-      const { session, conn } = await attachPage(launch.port)
+      const { session, conn } =
+        env.hosting === 'browser' ? await attachPageDirect(launch.port) : await attachPage(launch.port)
       connRef = conn
       await session.send('Page.enable')
       // 注意：不启用 Network 域——与指纹 platform flag 组合会毒化浏览器 Runtime（S3 排障）；

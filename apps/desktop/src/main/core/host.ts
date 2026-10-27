@@ -2,7 +2,7 @@
 // 保证 AppService/快照/云端/租约逻辑与承载方式解耦（docs/v0.2.0-plan.md §2）。
 import type { Session, BrowserWindow } from 'electron'
 import type { StructuredData } from './dataPlane'
-import type { PageSession } from './cdp'
+import type { CanSend } from './cdp'
 import type { KernelLaunch } from './kernelLauncher'
 import type { EnvConfig } from '@shared/types'
 
@@ -36,8 +36,8 @@ export interface KernelRunningEnv {
   runToken: string
   launch: KernelLaunch
   port: number
-  /** 页面级 CDP 连接（用于数据面与导航） */
-  page: PageSession
+  /** 页面级 CDP 连接（用于数据面与导航）；标准浏览器承载为直连会话 */
+  page: CanSend
   origins: Set<string>
 }
 

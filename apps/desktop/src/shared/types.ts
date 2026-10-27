@@ -2,7 +2,7 @@
 export type EnvMode = 'snapshot' | 'exclusive'
 
 /** 承载方式：builtin=Electron 内存 partition（轻量）；kernel=外挂指纹内核 */
-export type Hosting = 'builtin' | 'kernel'
+export type Hosting = 'builtin' | 'kernel' | 'browser'
 
 export interface ProxyConfig {
   scheme: 'http' | 'https' | 'socks5'
