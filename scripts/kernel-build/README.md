@@ -109,7 +109,7 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
   版本差导致的黄金二进制偏差按 midl.py 指引重整基线（copy 临时目录 → 黄金目录）。
 - **空静态库**：ungoogled 用 `if (false)` 清空部分 static_library 源码（safe_browsing、
   chromedriver）→ Windows 的 lld-link /lib 在 /WX 下拒绝写空库（Linux/mac 的 ar 无此
-  症状，上游不炸）→ 106 补丁给 arflags 全局加 `/ignore:emptyoutput`。
+  症状，上游不炸）→ 106 补丁给 arflags 全局加 `/llvmlibempty`（注意 `/ignore:emptyoutput` 只抑制告警并不写出文件，链接期照样找不到库）。
 - **lite 包缺二进制资源件**：updater 黄金 .tlb×13 之外，还有
   `third_party/win_build_output/mc/chrome/common/win/MSG00409.bin`、
   `chrome/app/etw_events/MSG00001.bin` 与 `chrome_events_winTEMP.BIN`

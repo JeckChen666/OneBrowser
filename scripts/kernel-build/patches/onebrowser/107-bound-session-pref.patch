@@ -1,6 +1,6 @@
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -2960,6 +2960,12 @@
+@@ -2960,6 +2960,16 @@
  inline constexpr char kRendererAppContainerEnabled[] =
      "renderer_app_container_enabled";
  
@@ -10,6 +10,60 @@
 +inline constexpr char kBoundSessionCredentialsEnabled[] =
 +    "signin.bound_session_credentials_enabled";
 +
++// OneBrowser: same as above — dropped by the signin_pref_names rename.
++inline constexpr char kSignedInWithCredentialProvider[] =
++    "signin.with_credential_provider";
++
  // A boolean that controls whether the Browser process has
  // ProcessExtensionPointDisablePolicy enabled.
  inline constexpr char kBlockBrowserLegacyExtensionPoints[] =
+--- a/chrome/browser/signin/signin_util_win.cc
++++ b/chrome/browser/signin/signin_util_win.cc
+@@ -43,13 +43,17 @@
+ #include "components/signin/core/browser/about_signin_internals.h"
+ #include "components/signin/public/base/consent_level.h"
+ #include "components/signin/public/base/signin_metrics.h"
+-#include "components/signin/public/base/signin_pref_names.h"
+ #include "components/signin/public/identity_manager/accounts_mutator.h"
+ #include "components/signin/public/identity_manager/identity_manager.h"
+ #include "components/signin/public/identity_manager/primary_account_mutator.h"
+ #include "components/sync/base/features.h"
+ #include "google_apis/gaia/gaia_id.h"
+ 
++// OneBrowser: upstream includes components/signin/public/base/signin_pref_names.h
++// here; ungoogled's rename dropped the include while keeping the usage. The
++// constants live in chrome/common/pref_names.h now (see 107 patch note there).
++#include "chrome/common/pref_names.h"
++
+ namespace signin_util {
+ 
+ namespace {
+@@ -209,9 +213,6 @@
+                                        account_id, profile));
+     }
+   }
+-
+-  // Mark this profile as having been signed in with the credential provider.
+-  profile->GetPrefs()->SetBoolean(prefs::kSignedInWithCredentialProvider, true);
+ }
+ 
+ // Extracts the |cred_provider_gaia_id| and |cred_provider_email| for the user
+@@ -388,18 +389,7 @@
+   //  - The profile is marked as having been signed in with a system credential.
+   //  - The profile is already signed in.
+   //  - The profile is in an auth error state.
+-  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+-  if (!(profile->GetPrefs()->GetBoolean(
+-            prefs::kSignedInWithCredentialProvider) &&
+-        identity_manager->HasPrimaryAccount(GetConsentLevel()) &&
+-        identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+-            identity_manager->GetPrimaryAccountId(GetConsentLevel())))) {
+     return false;
+-  }
+-
+-  const GaiaId gaia_id =
+-      identity_manager->GetPrimaryAccountInfo(GetConsentLevel()).gaia;
+-  return TrySigninWithCredentialProvider(profile, gaia_id, /*is_reauth=*/true);
+ }
+ 
+ }  // namespace signin_util

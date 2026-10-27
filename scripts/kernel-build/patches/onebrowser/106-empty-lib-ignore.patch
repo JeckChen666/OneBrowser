@@ -8,7 +8,7 @@
 +    # OneBrowser: ungoogled's `if (false)` source-empty static_libraries
 +    # (e.g. chrome/browser/safe_browsing) produce empty .lib inputs; lld-link
 +    # /lib refuses to write them under /WX without this.
-+    arflags = [ "/llvmlibthin", "/ignore:emptyoutput" ]
++    arflags = [ "/llvmlibthin", "/llvmlibempty" ]
    }
  }
  
