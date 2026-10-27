@@ -1,0 +1,15 @@
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -2960,6 +2960,12 @@
+ inline constexpr char kRendererAppContainerEnabled[] =
+     "renderer_app_container_enabled";
+ 
++// OneBrowser: ungoogled's signin_pref_names merge dropped this constant while
++// the policy handler table still references it (upstream 148 defines it in
++// components/signin/public/base/signin_pref_names.h). Value from upstream.
++inline constexpr char kBoundSessionCredentialsEnabled[] =
++    "signin.bound_session_credentials_enabled";
++
+ // A boolean that controls whether the Browser process has
+ // ProcessExtensionPointDisablePolicy enabled.
+ inline constexpr char kBlockBrowserLegacyExtensionPoints[] =

@@ -116,6 +116,10 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
   （ETW WEVT_TEMPLATE 资源；名字带 TEMP 但上游就是 checked-in 的正式文件）——
   全部从 googlesource 148 tag 还原。缺件排查通用法：报错 "failed to open file"，
   用 googlesource 目录 JSON 列表（`<dir>/?format=JSON`）比对本地树。
+- **ungoogled 改名丢常量**：signin_pref_names.h/cc 被合并改名为 signin_prefs.*，
+  `prefs::kBoundSessionCredentialsEnabled` 丢失而 policy 工厂表仍引用 → 107 补丁
+  把常量（值取自上游 signin_pref_names）补进 chrome/common/pref_names.h
+  （本地 bound_session 模块已改走 switches 路径，仅此一处引用）。
 - **LLVM OOM**：默认 -j=逻辑核数（20），net/ 等 heavy TU（thin-LTO）单进程峰值 3-4GB，
   47.7GB 内存扛不住 → 降并发；j12 下 blink animation 区出现 clang 0xC000001D 崩溃
   （单文件重跑必过，高内存并发下的非确定性不稳定）→ 最终 `-j8` 稳定。
