@@ -1,0 +1,14 @@
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -2658,7 +2658,10 @@
+       "-S",
+     ]
+   } else if (is_win && use_lld) {
+-    arflags = [ "/llvmlibthin" ]
++    # OneBrowser: ungoogled's `if (false)` source-empty static_libraries
++    # (e.g. chrome/browser/safe_browsing) produce empty .lib inputs; lld-link
++    # /lib refuses to write them under /WX without this.
++    arflags = [ "/llvmlibthin", "/ignore:emptyoutput" ]
+   }
+ }
+ 

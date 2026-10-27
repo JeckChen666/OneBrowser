@@ -107,6 +107,9 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
   （8.01.0628；须与 14.37 cl.exe 同 PATH 作预处理器，组装的 14.44 树没有 bin）；shim
   PATH 里 sdkbt 目录必须排在 KIT bin 之前（否则解析到 22621 midl，IID 与黄金不一致）。
   版本差导致的黄金二进制偏差按 midl.py 指引重整基线（copy 临时目录 → 黄金目录）。
+- **空静态库**：ungoogled 用 `if (false)` 清空部分 static_library 源码（safe_browsing、
+  chromedriver）→ Windows 的 lld-link /lib 在 /WX 下拒绝写空库（Linux/mac 的 ar 无此
+  症状，上游不炸）→ 106 补丁给 arflags 全局加 `/ignore:emptyoutput`。
 - **LLVM OOM**：默认 -j=逻辑核数（20），net/ 等 heavy TU（thin-LTO）单进程峰值 3-4GB，
   47.7GB 内存扛不住 → 降并发；j12 下 blink animation 区出现 clang 0xC000001D 崩溃
   （单文件重跑必过，高内存并发下的非确定性不稳定）→ 最终 `-j8` 稳定。
