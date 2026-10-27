@@ -1,10 +1,12 @@
 # OneBrowser
 
-> 指纹环境 + 登录态云端共享的浏览器（V0.3.0）
+> 指纹环境 + 登录态云端共享的浏览器（V0.4.0 初步可用）
 >
-> ![status](https://img.shields.io/badge/status-active--development-green) ![license](https://img.shields.io/badge/license-MIT-blue) ![e2e](https://img.shields.io/badge/e2e-64%2F64%20green-brightgreen)
+> ![status](https://img.shields.io/badge/status-active--development-green) ![license](https://img.shields.io/badge/license-MIT-blue) ![e2e](https://img.shields.io/badge/e2e-64%2F64%20green-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20mac%20%7C%20Linux-blue)
 >
 > **注意**：本项目处于快速迭代期（当前 V0.4），API 与快照格式可能变化；生产部署前请阅读已知限制。
+>
+> **V0.4.0（初步可用）**：Windows 为主力平台——安装包 `apps/desktop/release/*-setup.exe`（指纹 + L1 登录态漫游开箱可用）；完整 profile 漫游（L2）需 Linux/Docker 内核，Windows 原生 L2 进行中。
 >
 > 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md) · Windows 迁移：[docs/windows-migration.md](docs/windows-migration.md)
 
@@ -86,6 +88,8 @@ pnpm --dir apps/desktop kernel-smoke  # 内核指纹冒烟（Docker）
 ## 已知限制（按规划，后续版本解决）
 
 - **数据面 L1**：builtin 承载只迁移 cookie + localStorage（kernel 承载已升级 L2 文件级快照，全量站点数据随基线漫游）。
+- **Windows 内核能力边界（V0.4.0）**：官方预编译 win 内核 = 指纹全套 + **L1 登录态漫游**（无 os_crypt 补丁，L2 自动回退 L1 注入）；完整 L2 需 Linux/Docker 内核，Windows 原生 L2 待 os_crypt 补丁进入 fingerprint-chromium 上游（或自建内核，见 `scripts/kernel-build/`）。
+- **内核版本**：win 平台自动跳过 fingerprint-chromium 150.0.7871.186（其 --fingerprint+--fingerprint-platform 组合在 canvas 像素回读路径死锁渲染进程，上游 bug）→ 选 148。
 - **内核分发**：fingerprint-chromium 官方预编译产物 mac 为 arm64-only；Intel mac 开发机经 Docker（Linux 内核）验证（`ONEBROWSER_KERNEL_DOCKER=1`）。
 - **指纹 seed**：必须为 1~2147483647 的整数（内核要求 32 位整数；非法值会使渲染进程死锁，客户端已强校验）。
 - **Google 站点**：受 DBSC（设备绑定会话）限制，Google 登录态无法跨设备共享——这是行业级硬限制，详见调研报告 §4.3。
@@ -97,7 +101,7 @@ pnpm --dir apps/desktop kernel-smoke  # 内核指纹冒烟（Docker）
 apps/desktop   Electron 桌面端（src/main/core 为核心模块）
 server         Go 服务端
 test-site      Go 登录态测试站
-deploy         docker-compose（Postgres；MinIO 本地二进制运行）
-docs           调研报告 / 总体规划 / 版本范围
-scripts        dev-infra.sh
+deploy         docker-compose（Postgres）
+docs           调研报告 / 总体规划 / 版本范围 / Windows 迁移指南
+scripts        dev-infra.sh · kernel-build（内核补丁与自建构建）· kernel-docker（Docker 内核验证环境）
 ```

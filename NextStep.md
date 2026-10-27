@@ -54,24 +54,25 @@
 - **运行环境**：server(:8787，DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) / Postgres(docker :55432) / localstack S3(:4566) 本机常驻
 - **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；镜像 `onebrowser-kernel-smoke`）
 
-## 下一步（按优先级；2026-10-27 范围调整：W3 砍削，V0.4 冲初步可用）
+## 下一步（按优先级；V0.4.0 初步可用已发版）
 
-> **范围决策（2026-10-27）**：Windows 自建内核（W3）砍削为「暂停存档」——产品核心能力
-> （指纹 + 登录态漫游）在 Windows 上经 W1 已全绿（官方内核 + L1 回退），Win 原生 L2 是
-> 唯一缺口且非命脉。W3 构建现场停在 chrome.dll 链接段（`D:/ob-kernel-build`，
-> `bootstrap-win.sh` 可全程复现，ninja 续跑命令见 ninja-build.bat），不再投入。
-
-1. **V0.4 初步可用发版（当前冲刺）**：
-   - [x] Windows 安装包：`pnpm dist:win`（electron-builder nsis，配置已就绪）
-   - [ ] 安装包冒烟：装上后启动、注册/建环境/开内核环境（官方内核自动下载 148）、指纹断言
-   - [ ] README 已知限制更新：Windows 原生内核 = 指纹 + L1 漫游；L2 需 Linux/Docker 内核
-   - [ ] tag `v0.4.0`（初步可用）
-2. **Win 原生 L2 的正道（中优先级，不阻塞发版）**：os_crypt 4 文件补丁提 PR 给
-   fingerprint-chromium 上游——接受则 Windows L2 免费跟随官方发布；拒绝则自建内核
-   （W3 存档）作为可选高级件。
-3. **V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
+1. **安装包分发与体验补强**：代码签名证书（现未签名，SmartScreen 会拦）；正式图标；
+   electron-updater 自动更新（V0.5 已规划，可提前）。
+2. **Win 原生 L2（不阻塞）**：os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游；
+   接受则 Windows L2 免费跟随官方发布；拒绝则 W3 存档的自建内核作为可选高级件
+   （构建现场 `D:/ob-kernel-build` 停在 chrome.dll 链接段，`bootstrap-win.sh` 可复现，
+   ninja 续跑即可出包）。
+3. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy）。
+4. **V0.5 规划**：增量快照、自动更新、团队协作。
 
 ## 已完成归档
+
+- **[2026-10-27] V0.4.0 初步可用发版（tag `v0.4.0`）**：Windows 安装包（nsis 120MB，未签名）
+  实测验收——静默安装 → builtin e2e 17/17（7.6s）→ 原生内核冒烟 6/6（官方 148 自动下载）；
+  `dist:win` 脚本入库；README 版本/平台徽章/已知限制（win 内核=指纹+L1，L2 需 Linux/docker，
+  150 上游死锁规避）更新。**范围决策**：W3 自建内核砍削暂停（能力盘点：产品核心=指纹+登录态
+  漫游在 win 已全绿，win 原生 L2 唯一缺口走上游 PR/可选件），构建现场存档于 D:/ob-kernel-build
+  （bootstrap-win.sh 全程可复现，停在 chrome.dll 链接段）。
 
 - **[2026-10-26] W2 win 端 os_crypt 补丁**：`100-os-crypt-key.patch` 第四文件 `os_crypt_win.cc`
   （InitWithExistingKey 注入 16B、漫游模式 v11 AES-CBC 线格式对齐 mac/linux、v10/DPAPI
