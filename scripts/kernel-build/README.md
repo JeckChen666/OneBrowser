@@ -99,8 +99,17 @@ bash build-mac.sh  /Users/macos/Code/ob-kernel-build   # 编译（8 核 6–12h�
 - **rc.exe**：资源编译器包装由 DEPS gcs hook 分发（build/toolchain/win/rc/win/ 只留 sha1）；
   lite 树内 third_party/depot_tools 的 download_from_google_storage.py 是剪剩空壳（静默
   无效）——必须用独立 clone 的 depot_tools 里的脚本下载。
+- **midl 黄金链**：`midl()` 目标把新产出与 `third_party/win_build_output/midl`（黄金文件）
+  比对，tlb 缺失时会自造 0 字节占位并在 overwrite_guids 断言炸掉。lite 包不含任何 .tlb
+  （本机共缺 13 个：updater 9 + elevation_service + service_program + elevated_tracing +
+  remoting chromoting_lib）→ 全部从 googlesource 148 tag 还原（`?format=TEXT` base64 可
+  直接解二进制）。midl.exe 用 Microsoft.Windows.SDK.BuildTools NuGet 包的 26100 版
+  （8.01.0628；须与 14.37 cl.exe 同 PATH 作预处理器，组装的 14.44 树没有 bin）；shim
+  PATH 里 sdkbt 目录必须排在 KIT bin 之前（否则解析到 22621 midl，IID 与黄金不一致）。
+  版本差导致的黄金二进制偏差按 midl.py 指引重整基线（copy 临时目录 → 黄金目录）。
 - **LLVM OOM**：默认 -j=逻辑核数（20），net/ 等 heavy TU（thin-LTO）单进程峰值 3-4GB，
-  47.7GB 内存扛不住集体峰值 → `-j12`（build-win.sh 已固化；内存更小的机器再降）。
+  47.7GB 内存扛不住 → 降并发；j12 下 blink animation 区出现 clang 0xC000001D 崩溃
+  （单文件重跑必过，高内存并发下的非确定性不稳定）→ 最终 `-j8` 稳定。
 - **C11 threads.h（pthreadpool）**：既不在任何 Windows SDK，也只在 MSVC 14.38+ 的
   include 里（本机 14.37 没有、22621 SDK 也没有）→ VS 引导器 `--layout` 免管理员拉
   `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`，从各包 payload.vsix 组装 14.44

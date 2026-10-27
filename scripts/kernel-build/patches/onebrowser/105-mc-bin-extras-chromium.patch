@@ -1,0 +1,17 @@
+--- a/build/win/message_compiler.py
++++ b/build/win/message_compiler.py
+@@ -125,7 +125,13 @@
+     # mc.exe invocation and post-processing are complete, now compare the output
+     # in tmp_dir to the checked-in outputs.
+     diff = filecmp.dircmp(tmp_dir, source)
+-    if diff.diff_files or set(diff.left_list) != set(diff.right_list):
++    # OneBrowser: newer mc.exe (SDK 22621) also emits intermediate message
++    # binaries (e.g. MSG00409.bin) into the output dir; they are build-time
++    # inputs for the .rc, not part of the golden comparison. Ignore them here
++    # — the diff_files loop below already skips .bin.
++    left_list = set(f for f in diff.left_list if not f.lower().endswith('.bin'))
++    right_list = set(f for f in diff.right_list if not f.lower().endswith('.bin'))
++    if diff.diff_files or left_list != right_list:
+       print('mc.exe output different from files in %s, see %s' % (source,
+                                                                   tmp_dir))
+       diff.report()
