@@ -17,7 +17,8 @@
     "e2e:fp": "electron-vite build && electron . --e2e-fp",
     "e2e:l2": "electron-vite build && electron . --e2e-l2",
     "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist": "electron-vite build && electron-builder -mwl"
+    "dist": "electron-vite build && electron-builder -mwl",
+    "dist:win": "electron-vite build && electron-builder --win"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

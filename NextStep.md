@@ -54,16 +54,22 @@
 - **运行环境**：server(:8787，DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) / Postgres(docker :55432) / localstack S3(:4566) 本机常驻
 - **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；镜像 `onebrowser-kernel-smoke`）
 
-## 下一步（按优先级，Windows 开发机；迁移指南 docs/windows-migration.md）
+## 下一步（按优先级；2026-10-27 范围调整：W3 砍削，V0.4 冲初步可用）
 
-1. **W3 Windows 本机自建内核**（VS Build Tools，官方支持）或 CI 三平台：bootstrap 出
-   win 源码树（补丁已四文件齐，bootstrap.sh 的 patch 步骤直接可用）→ gn gen → autoninja；
-   三端补丁齐后 mac x64 产物顺便在 CI 出。**注意 win 段补丁尚未经过编译器检验**（apply
-   已验证，编译验证在 W3 源码树重放时完成）。
-2. **W4 PoC 收口**：win 版 os-crypt-roaming（双 profile 拷贝互解）→ L2 漫游全平台（v11
-   线格式已三端对齐，PoC 直接按同 key 跨内核验证）→ V0.4 正式发版。
-3. **（并行）V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
-4. **V0.4-B 收尾（可选）**：win nsis / linux AppImage 交叉构建（CI 或其它平台机器上出包）；正式图标设计；签名证书。
+> **范围决策（2026-10-27）**：Windows 自建内核（W3）砍削为「暂停存档」——产品核心能力
+> （指纹 + 登录态漫游）在 Windows 上经 W1 已全绿（官方内核 + L1 回退），Win 原生 L2 是
+> 唯一缺口且非命脉。W3 构建现场停在 chrome.dll 链接段（`D:/ob-kernel-build`，
+> `bootstrap-win.sh` 可全程复现，ninja 续跑命令见 ninja-build.bat），不再投入。
+
+1. **V0.4 初步可用发版（当前冲刺）**：
+   - [x] Windows 安装包：`pnpm dist:win`（electron-builder nsis，配置已就绪）
+   - [ ] 安装包冒烟：装上后启动、注册/建环境/开内核环境（官方内核自动下载 148）、指纹断言
+   - [ ] README 已知限制更新：Windows 原生内核 = 指纹 + L1 漫游；L2 需 Linux/Docker 内核
+   - [ ] tag `v0.4.0`（初步可用）
+2. **Win 原生 L2 的正道（中优先级，不阻塞发版）**：os_crypt 4 文件补丁提 PR 给
+   fingerprint-chromium 上游——接受则 Windows L2 免费跟随官方发布；拒绝则自建内核
+   （W3 存档）作为可选高级件。
+3. **V0.5 规划**：增量快照、electron-updater 自动更新、团队协作。
 
 ## 已完成归档
 
