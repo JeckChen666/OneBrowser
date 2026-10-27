@@ -32,6 +32,8 @@ type Config struct {
 	AuthRateBurst int    // 令牌桶容量
 	UserQuotaBytes int64 // 每用户快照存储配额（0=不限）
 
+	AdminToken string // 运维工作台口令（空=不挂载 /admin）
+
 	PresignPutTTL time.Duration
 	PresignGetTTL time.Duration
 }
@@ -61,6 +63,8 @@ func Load() Config {
 		AuthRatePerMin: getenvInt("AUTH_RATE_PER_MIN", 20),
 		AuthRateBurst:  getenvInt("AUTH_RATE_BURST", 10),
 		UserQuotaBytes: int64(getenvInt("USER_QUOTA_GB", 2)) << 30,
+
+		AdminToken: getenv("ADMIN_TOKEN", ""),
 
 		PresignPutTTL: 15 * time.Minute,
 		PresignGetTTL: 60 * time.Minute,

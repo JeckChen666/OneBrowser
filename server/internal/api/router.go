@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"onebrowser/server/internal/admin"
 	"onebrowser/server/internal/auth"
 	"onebrowser/server/internal/config"
 	"onebrowser/server/internal/envs"
@@ -100,6 +101,11 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/v1/envs/{envID}/snapshots/{snapID}/download", d.Snaps.GetDownload)
 		r.Get("/v1/envs/{envID}/base", d.Snaps.GetBase)
 	})
+
+	// 运维工作台（只读）：设了 ADMIN_TOKEN 才挂载；登录端点复用认证限流防爆破
+	if d.Cfg.AdminToken != "" {
+		r.Mount("/admin", admin.New(d.DB, d.S3, d.Cfg).Handler(authLimited))
+	}
 	return r
 }
 

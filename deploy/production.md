@@ -34,6 +34,7 @@ curl -fsS 'https://<域名>/v1/health?deep=1'  # deps: db=ok s3=ok
 | POSTGRES_PASSWORD | .env（chmod 600） | 改 .env + `ALTER USER` + 重启 |
 | S3_ACCESS_KEY/SECRET | .env | IAM 侧轮换后改 .env 重启 |
 | ACME 证书 | caddy-data 卷自动管理 | 自动续期，勿删卷 |
+| ADMIN_TOKEN | .env（chmod 600） | 改 .env 重启（工作台 cookie 随即失效） |
 | 客户端主密码 | **只在用户脑中**（E2E，服务端无可轮换项） | 用户侧重新注册 |
 
 `.env` 不入 git；备份密钥另存（密码管理器），与数据备份分开保管。
@@ -57,8 +58,21 @@ curl -fsS 'https://<域名>/v1/health?deep=1'  # deps: db=ok s3=ok
 | AUTH_RATE_PER_MIN | 20 | 认证接口每 IP 每分钟令牌（0=不限流） |
 | AUTH_RATE_BURST | 10 | 令牌桶容量 |
 | GEO_API | ip-api.com | 出口 IP 地理推导（可换源） |
+| ADMIN_TOKEN | （空） | 运维工作台口令；**空=不挂载 /admin**。仅展示元数据（E2E 密文不可见），登录走认证限流 |
 
 限流为单实例内存态；横向扩容前需换 Redis 后端（代码入口 `internal/ratelimit`）。
+
+## 运维工作台（/admin）
+
+设 `ADMIN_TOKEN` 后访问 `https://<DOMAIN>/admin/`（未设则路由整体不存在，不暴露任何面）。
+
+- **能力（只读）**：概览（账号/环境/快照计数、存储水位、db/s3 依赖、在线会话、限流与保留策略）、
+  账号列表（注册时间/设备数/环境数/快照占用）、环境列表（名称/模式/基线大小与时间/租约占用方）、
+  最近快照。15s 自动刷新可关。
+- **边界**：环境配置与快照载荷是端到端密文，工作台看不到也不该看到；不能改任何数据。
+- **鉴权**：口令登录 → HttpOnly cookie（12h）；也支持 `Authorization: Bearer <ADMIN_TOKEN>` 便于
+  curl/拨测。登录接口复用认证限流（AUTH_RATE_PER_MIN）。
+- **curl 示例**：`curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://<DOMAIN>/admin/api/overview`
 
 ## 监控要点
 

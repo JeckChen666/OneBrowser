@@ -40,6 +40,8 @@ services:
       USER_QUOTA_GB: ${USER_QUOTA_GB:-2}
       AUTH_RATE_PER_MIN: ${AUTH_RATE_PER_MIN:-20}
       GEO_API: ${GEO_API:-}
+      # 运维工作台（https://<DOMAIN>/admin/；留空=不开放）
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     expose:
       - "8787" # 仅经 caddy 反代对外
 

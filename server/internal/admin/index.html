@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneBrowser 运维工作台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    background: #f0f2f5; color: #303133; font-size: 14px;
+  }
+  /* 登录 */
+  #login {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #1f2d3d 0%, #2b4a6f 100%); z-index: 10;
+  }
+  .login-card { width: 360px; background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  .login-card h1 { font-size: 20px; margin-bottom: 4px; }
+  .login-card p { color: #8492a6; font-size: 13px; margin-bottom: 20px; }
+  .login-card input {
+    width: 100%; padding: 10px 12px; border: 1px solid #dcdfe6; border-radius: 6px;
+    font-size: 14px; outline: none; margin-bottom: 14px;
+  }
+  .login-card input:focus { border-color: #409eff; }
+  .login-card button {
+    width: 100%; padding: 10px; border: none; border-radius: 6px; background: #409eff;
+    color: #fff; font-size: 14px; cursor: pointer;
+  }
+  .login-card button:hover { background: #337ecc; }
+  #loginErr { color: #f56c6c; font-size: 12px; margin-bottom: 10px; min-height: 16px; }
+  /* 主界面 */
+  header {
+    background: #fff; border-bottom: 1px solid #e4e7ed; padding: 0 24px; height: 56px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 17px; }
+  header .spacer { flex: 1; }
+  header label { font-size: 12px; color: #606266; display: flex; align-items: center; gap: 4px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button {
+    border: none; background: none; padding: 8px 16px; font-size: 14px; cursor: pointer;
+    color: #606266; border-radius: 6px 6px 0 0; border-bottom: 2px solid transparent;
+  }
+  .tabs button.on { color: #409eff; border-bottom-color: #409eff; font-weight: 600; }
+  main { padding: 20px 24px; max-width: 1280px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .card { background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 16px 18px; }
+  .card .k { font-size: 12px; color: #909399; }
+  .card .v { font-size: 24px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .v small { font-size: 12px; color: #909399; font-weight: normal; }
+  .panel { background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 16px 18px; margin-bottom: 18px; }
+  .panel h3 { font-size: 13px; color: #606266; margin-bottom: 10px; }
+  .kv { display: flex; flex-wrap: wrap; gap: 8px 32px; font-size: 13px; color: #606266; }
+  .ok { color: #67c23a; }
+  .down { color: #f56c6c; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ebeef5; border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #f0f2f5; }
+  th { background: #fafafa; color: #909399; font-weight: 600; white-space: nowrap; }
+  td { color: #606266; }
+  td.num { font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 12px; }
+  .tag.g { background: #f0f9eb; color: #67c23a; }
+  .tag.y { background: #fdf6ec; color: #e6a23c; }
+  .tag.r { background: #fef0f0; color: #f56c6c; }
+  .tag.b { background: #ecf5ff; color: #409eff; }
+  .hint { color: #c0c4cc; }
+  .meta { font-size: 12px; color: #909399; margin-bottom: 10px; }
+  button.ghost {
+    border: 1px solid #dcdfe6; background: #fff; color: #606266; border-radius: 6px;
+    padding: 6px 14px; font-size: 13px; cursor: pointer;
+  }
+  button.ghost:hover { color: #409eff; border-color: #409eff; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>🔐 OneBrowser 运维工作台</h1>
+    <p>输入管理员口令（ADMIN_TOKEN）登录</p>
+    <input id="token" type="password" placeholder="管理员口令" autofocus>
+    <div id="loginErr"></div>
+    <button id="loginBtn">登录</button>
+  </div>
+</div>
+
+<header>
+  <h1>🌐 OneBrowser 运维工作台</h1>
+  <nav class="tabs">
+    <button data-tab="overview" class="on">概览</button>
+    <button data-tab="users">账号</button>
+    <button data-tab="envs">环境</button>
+    <button data-tab="snapshots">快照</button>
+  </nav>
+  <div class="spacer"></div>
+  <label><input type="checkbox" id="auto" checked> 15s 自动刷新</label>
+  <button class="ghost" id="refreshBtn">刷新</button>
+  <button class="ghost" id="logoutBtn">登出</button>
+</header>
+
+<main>
+  <div id="view-overview">
+    <div class="cards" id="statCards"></div>
+    <div class="panel">
+      <h3>依赖与配置</h3>
+      <div class="kv" id="depKv"></div>
+    </div>
+  </div>
+  <div id="view-users" hidden>
+    <div class="meta">最多显示 500 条，按注册时间倒序</div>
+    <table><thead><tr><th>邮箱</th><th>注册时间</th><th>设备</th><th>环境</th><th>快照占用</th></tr></thead><tbody id="tb-users"></tbody></table>
+  </div>
+  <div id="view-envs" hidden>
+    <div class="meta">最多显示 500 条，按更新时间倒序；环境配置（指纹/代理/种子）为端到端密文，此处不可见</div>
+    <table><thead><tr><th>环境</th><th>模式</th><th>归属</th><th>基线</th><th>租约</th><th>更新时间</th></tr></thead><tbody id="tb-envs"></tbody></table>
+  </div>
+  <div id="view-snapshots" hidden>
+    <div class="meta">最近 200 条，按创建时间倒序；快照载荷为密文，此处仅元数据</div>
+    <table><thead><tr><th>状态</th><th>环境</th><th>归属</th><th>设备</th><th>大小</th><th>创建时间</th></tr></thead><tbody id="tb-snapshots"></tbody></table>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id)
+let tab = 'overview'
+let timer = null
+
+function fmtBytes(n) {
+  if (n == null) return '—'
+  if (n < 1024) return n + ' B'
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n, i = -1
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return v.toFixed(v >= 100 ? 0 : 1) + ' ' + units[i]
+}
+function fmtTime(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d)) return '—'
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60)
+  return (d ? d + '天 ' : '') + h + '小时 ' + m + '分'
+}
+async function api(path) {
+  const r = await fetch(path, { credentials: 'same-origin' })
+  if (r.status === 401) { showLogin(); throw new Error('unauthorized') }
+  if (!r.ok) throw new Error('HTTP ' + r.status)
+  return r.json()
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML }
+
+function showLogin() { $('login').style.display = 'flex'; if (timer) { clearInterval(timer); timer = null } }
+function showApp() {
+  $('login').style.display = 'none'
+  if (!timer && $('auto').checked) timer = setInterval(refresh, 15000)
+}
+
+async function login() {
+  $('loginErr').textContent = ''
+  $('loginBtn').disabled = true
+  try {
+    const r = await fetch('/admin/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: $('token').value })
+    })
+    if (!r.ok) { $('loginErr').textContent = '口令错误'; return }
+    sessionStorage.removeItem('ob_admin_token')
+    showApp(); refresh()
+  } finally { $('loginBtn').disabled = false }
+}
+
+function switchTab(t) {
+  tab = t
+  for (const b of document.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.tab === t)
+  for (const el of document.querySelectorAll('main > div')) el.hidden = el.id !== 'view-' + t
+  refresh()
+}
+
+async function refresh() {
+  try {
+    if (tab === 'overview') await loadOverview()
+    else if (tab === 'users') await loadUsers()
+    else if (tab === 'envs') await loadEnvs()
+    else await loadSnapshots()
+  } catch (e) {
+    if (e.message !== 'unauthorized') console.error(e)
+  }
+}
+
+async function loadOverview() {
+  const o = await api('/admin/api/overview')
+  const cards = [
+    ['用户', o.users], ['环境', o.envs], ['快照（ready）', o.snapshots],
+    ['快照总量', fmtBytes(o.snapBytes)], ['活跃租约', o.activeLeases], ['在线会话', o.activeSessions]
+  ]
+  $('statCards').innerHTML = cards.map(([k, v]) =>
+    `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')
+  const dep = (name, s) => `<span>${name}: <b class="${s === 'ok' ? 'ok' : 'down'}">${esc(s)}</b></span>`
+  $('depKv').innerHTML = [
+    dep('DB', o.db), dep('S3', o.s3),
+    `<span>上传中快照: <b>${o.uploadingSnapshots}</b>${o.uploadingSnapshots > 0 ? '（残留？）' : ''}</span>`,
+    `<span>配额: ${fmtBytes(o.quotaBytes)} / 用户</span>`,
+    `<span>保留策略: 最近 ${o.snapshotRetention || '∞'} 份</span>`,
+    `<span>认证限流: ${o.authRatePerMin}/min/IP</span>`,
+    `<span>运行时长: ${fmtUptime(o.uptimeSec)}</span>`,
+    `<span>${esc(o.goVersion)}</span>`
+  ].join('')
+}
+
+async function loadUsers() {
+  const rows = await api('/admin/api/users')
+  $('tb-users').innerHTML = rows.map(u => `<tr>
+    <td>${esc(u.email)}</td><td>${fmtTime(u.createdAt)}</td>
+    <td class="num">${u.devices}</td><td class="num">${u.envs}</td>
+    <td class="num">${fmtBytes(u.snapBytes)}</td>
+  </tr>`).join('') || '<tr><td colspan="5" class="hint">暂无账号</td></tr>'
+}
+
+async function loadEnvs() {
+  const rows = await api('/admin/api/envs')
+  $('tb-envs').innerHTML = rows.map(e => {
+    const mode = e.mode === 'snapshot' ? '<span class="tag g">快照</span>' : '<span class="tag y">互斥</span>'
+    const base = e.baseAt ? `${fmtBytes(e.baseSize)}<br><span class="hint">${fmtTime(e.baseAt)}</span>` : '<span class="hint">无基线</span>'
+    let lease = '<span class="hint">空闲</span>'
+    if (e.lease) {
+      const evicting = e.lease.state === 'evicting'
+      lease = `<span class="tag ${evicting ? 'r' : 'b'}">${evicting ? '交接中' : '占用中'}</span>
+        <span class="hint"> 设备 ${esc(e.lease.holder)}</span>`
+    }
+    return `<tr><td><b>${esc(e.name)}</b></td><td>${mode}</td><td>${esc(e.email)}</td>
+      <td>${base}</td><td>${lease}</td><td>${fmtTime(e.updatedAt)}</td></tr>`
+  }).join('') || '<tr><td colspan="6" class="hint">暂无环境</td></tr>'
+}
+
+async function loadSnapshots() {
+  const rows = await api('/admin/api/snapshots')
+  $('tb-snapshots').innerHTML = rows.map(s => {
+    const st = s.state === 'ready' ? '<span class="tag g">ready</span>'
+      : s.state === 'uploading' ? '<span class="tag y">uploading</span>' : '<span class="tag r">failed</span>'
+    return `<tr><td>${st}</td><td>${esc(s.env)}</td><td>${esc(s.email)}</td>
+      <td class="hint">${esc(s.device)}</td><td class="num">${fmtBytes(s.sizeBytes)}</td><td>${fmtTime(s.createdAt)}</td></tr>`
+  }).join('') || '<tr><td colspan="6" class="hint">暂无快照</td></tr>'
+}
+
+$('loginBtn').addEventListener('click', login)
+$('token').addEventListener('keyup', (e) => { if (e.key === 'Enter') login() })
+$('logoutBtn').addEventListener('click', async () => {
+  await fetch('/admin/api/logout', { method: 'POST' })
+  showLogin()
+})
+$('refreshBtn').addEventListener('click', refresh)
+$('auto').addEventListener('change', () => {
+  if (timer) { clearInterval(timer); timer = null }
+  if ($('auto').checked && $('login').style.display === 'none') timer = setInterval(refresh, 15000)
+})
+for (const b of document.querySelectorAll('.tabs button'))
+  b.addEventListener('click', () => switchTab(b.dataset.tab))
+
+// 启动：探测会话态
+fetch('/admin/api/session').then((r) => {
+  if (r.ok) { showApp(); refresh() } else showLogin()
+}).catch(showLogin)
+</script>
+</body>
+</html>

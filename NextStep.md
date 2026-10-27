@@ -12,18 +12,24 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-27，V0.4.1 已发版；UI/UX 交互优化整合完成）
+## 当前状态（快照，2026-10-27，V0.4.1 已发版；服务端运维工作台完成）
 
-- **UI/UX 交互优化整合已完成（本工作单元）**：管理界面从「能用」到「好用」——
-  ①登录页注册态强制「主密码不可找回」警示+勾选确认（E2E 数据安全底线）；②新建/编辑对话框
-  模式与承载改为说明卡片；编辑首次接入指纹三件套/种子/代理清除/承载切换（主进程 updateEnv
-  早已支持、UI 一直没接）；③环境详情抽屉（种子可复制/指纹/代理/基线/租约全量展示）；
-  ④快照模式「丢弃改动关闭」二次确认、登出确认、每行操作 busy 态；⑤内核状态 popover
-  （版本/来源/下载进度条/本地导入/未就绪小红点）；⑥空状态三步引导+CTA、帮助弹卡、
-  错误信息美化（剥 Electron IPC 包装）。主进程新增 ob:appInfo / ob:sync，updateEnv 放开
-  seed（isValidSeed 防 KI-1 毒化）/proxy null 清除。截图冒烟升级 `--screenshot-tour`
-  六站巡航（注册视图→空态→新建→表格→详情→编辑）。
-  **验证**：typecheck 双绿 · builtin e2e 17/17（7.3s）· 六站截图逐张目检通过。
+- **服务端运维工作台已完成（本工作单元）**：`server/internal/admin`（Go 包 + go:embed 单页，
+  零前端构建）——设 `ADMIN_TOKEN` 后开放 `https://<DOMAIN>/admin/`，未设则路由整体不存在。
+  只读四视图：概览（账号/环境/快照计数、存储水位、db/s3 依赖、上传中残留、在线会话、治理
+  参数）、账号（注册时间/设备/环境/快照占用）、环境（模式标签/基线大小与时间/租约占用方）、
+  快照（状态/设备/大小）。**鉴权**：口令恒时比较 → HttpOnly cookie（12h，HTTPS 下自动
+  Secure），亦支持 `Bearer <ADMIN_TOKEN>` 供 curl；登录端点复用认证限流。**边界**：E2E 密文
+  （指纹/代理/种子/快照载荷）不可见、无任何写操作。部署件：prod compose `ADMIN_TOKEN` 透传、
+  .env.example、production.md「运维工作台」节。Go 测试新增 admin 包（鉴权流/数据形状/页面）。
+  **验证**：全量 Go 测试绿；本机实跑（ADMIN_TOKEN=dev-admin-123）浏览器四 tab 截图目检通过；
+  期间修掉 overview 治理参数「字段声明未赋值」回归（测试已锁定）。
+- **UI/UX 交互优化已完成（上一工作单元，提交 8e401ee）**：登录页注册态强制「主密码不可找回」
+  警示+勾选门禁；新建/编辑对话框说明卡片化，编辑接入指纹三件套/种子/代理清除/承载切换
+  （主进程 updateEnv 早已支持、UI 首次接线，seed 走 isValidSeed 防 KI-1）；环境详情抽屉；
+  快照丢弃关闭二次确认/登出确认/每行 busy；内核 popover（进度条/来源/导入/提醒点）；空状态
+  三步引导；帮助弹卡；错误信息剥 IPC 包装；`--screenshot-tour` 六站巡航。typecheck 双绿 ·
+  e2e 17/17 · 六站截图目检。
 - **V0.4.1 已发版（tag `v0.4.1`）**：标准浏览器承载（本机 Edge/Chrome，无指纹免下载）；
   打包形态双绿（e2e 17/17 + browser-smoke 3/3）；Edge 启动器进程交接与 156 flatten 移除
   两大坑修复（attachPageDirect 页级直连 ws）。
@@ -46,16 +52,24 @@
 ## 下一步（按优先级）
 
 1. **推送远端**：`git push origin main --tags`（v0.4.0 / v0.4.0-win-prepared / v0.4.1 及全部提交仍在本地）。
-2. **0.4.2 安装包重出 + 打包形态验收**（含本次 UI/UX 优化；dist:win → 静默安装 → e2e + tour 截图）；
+2. **0.4.2 安装包重出 + 打包形态验收**（含桌面 UI/UX 优化；dist:win → 静默安装 → e2e + tour 截图）；
    随后：代码签名证书（现未签名，SmartScreen 会拦）、正式图标、electron-updater 自动更新。
 3. **Win 原生 L2（不阻塞）**：os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游；
    接受则 Windows L2 免费跟随官方发布；拒绝则 W3 存档的自建内核作为可选高级件
    （构建现场 `D:/ob-kernel-build` 停在 chrome.dll 链接段，`bootstrap-win.sh` 可复现，
    ninja 续跑即可出包）。
-4. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy）。
-5. **V0.5 规划**：增量快照、自动更新、团队协作。
+4. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy），
+   含 ADMIN_TOKEN 开通运维工作台的实操验证。
+5. **V0.5 规划**：增量快照、自动更新、团队协作；可选：工作台增写操作（账号停用/配额调整，
+   需 users 表加列 + auth 中间件拦截）。
 
 ## 已完成归档
+
+- **[2026-10-27] 服务端运维工作台（/admin，只读）**：`server/internal/admin` + 内嵌单页
+  （go:embed，零前端构建）；ADMIN_TOKEN 门禁（未设=不挂载）、恒时比较、HttpOnly cookie、
+  Bearer 双通道、登录复用认证限流；概览/账号/环境/快照四只读视图（E2E 密文不可见边界写进
+  页面与 production.md）；deploy 三件（prod compose/.env.example/production.md）同步。
+  Go 测试 admin 包三组；本机实跑浏览器目检四 tab 全过；修复 overview 治理参数未接线回归。
 
 - **[2026-10-27] UI/UX 交互优化整合（V0.4.2 待发）**：注册主密码不可找回警示+勾选门禁；
   新建/编辑对话框说明卡片化，编辑接入指纹三件套/种子/代理清除/承载切换（updateEnv 既有
