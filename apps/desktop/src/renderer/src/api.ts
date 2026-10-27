@@ -1,7 +1,17 @@
 // 渲染进程对 preload API 的类型化封装
-import type { AppState, CreateEnvInput, KernelStatus, MainEvent, ProxyConfig } from '@shared/types'
+import type {
+  AppInfo,
+  AppState,
+  CreateEnvInput,
+  FingerprintConfig,
+  Hosting,
+  KernelStatus,
+  MainEvent,
+  ProxyConfig
+} from '@shared/types'
 
 interface ObApi {
+  appInfo(): Promise<AppInfo>
   getState(): Promise<AppState>
   register(email: string, password: string): Promise<void>
   login(email: string, password: string): Promise<void>
@@ -9,8 +19,17 @@ interface ObApi {
   createEnv(input: CreateEnvInput): Promise<void>
   updateEnv(
     id: string,
-    patch: { name?: string; homepage?: string; proxy?: ProxyConfig }
+    patch: {
+      name?: string
+      homepage?: string
+      proxy?: ProxyConfig | null
+      fingerprint?: FingerprintConfig
+      hosting?: Hosting
+      seed?: string
+      sessionCheck?: { urlPath: string; loggedInMarker: string } | null
+    }
   ): Promise<void>
+  sync(): Promise<void>
   deleteEnv(id: string): Promise<void>
   openEnv(id: string): Promise<void>
   closeEnv(id: string): Promise<void>

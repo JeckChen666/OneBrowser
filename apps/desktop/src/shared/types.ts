@@ -100,6 +100,13 @@ export interface AppState {
   envs: EnvView[]
 }
 
+/** 应用自身信息（关于/登录页版本号展示用） */
+export interface AppInfo {
+  version: string
+  electron: string
+  platform: string
+}
+
 export interface CreateEnvInput {
   name: string
   mode: EnvMode

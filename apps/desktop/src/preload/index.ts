@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppState, CreateEnvInput, KernelStatus, MainEvent, ProxyConfig } from '@shared/types'
+import type { AppInfo, AppState, CreateEnvInput, FingerprintConfig, Hosting, KernelStatus, MainEvent, ProxyConfig } from '@shared/types'
 
 interface IpcResult<T> {
   ok: boolean
@@ -14,6 +14,7 @@ const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> =>
   })
 
 const api = {
+  appInfo: (): Promise<AppInfo> => invoke('ob:appInfo'),
   getState: (): Promise<AppState> => invoke('ob:getState'),
   register: (email: string, password: string): Promise<void> => invoke('ob:register', email, password),
   login: (email: string, password: string): Promise<void> => invoke('ob:login', email, password),
@@ -24,10 +25,14 @@ const api = {
     patch: {
       name?: string
       homepage?: string
-      proxy?: ProxyConfig
+      proxy?: ProxyConfig | null
+      fingerprint?: FingerprintConfig
+      hosting?: Hosting
+      seed?: string
       sessionCheck?: { urlPath: string; loggedInMarker: string } | null
     }
   ): Promise<void> => invoke('ob:updateEnv', id, patch),
+  sync: (): Promise<void> => invoke('ob:sync'),
   deleteEnv: (id: string): Promise<void> => invoke('ob:deleteEnv', id),
   openEnv: (id: string): Promise<void> => invoke('ob:openEnv', id),
   closeEnv: (id: string): Promise<void> => invoke('ob:closeEnv', id),

@@ -12,60 +12,58 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-27，W1/W2 完成，W3 构建长跑中）
+## 当前状态（快照，2026-10-27，V0.4.1 已发版；UI/UX 交互优化整合完成）
 
-- **W3 进行中（win 自建内核）**：构建管线全通——源码树+126 上游补丁+OneBrowser 三补丁
-  落树；工具链全预编译（clang/rust gcs 包/node/gperf/dxheaders）；gn 2354 自举成功；
-  gn gen 28,840 目标；ninja 52k 步长跑中（零失败推进）。过程踩坑 12+ 全部修复并固化进
-  `bootstrap-win.sh`/`build-win.sh`（坑清单见 kernel-build README「Windows 构建纪要」：
-  NTDDI overlay、WINCRYPT_USE_SYMBOL_PREFIX、ATL layout、gnrt vendor 缺件、GBK 系列等）。
-  新增 101（vs_toolchain 本地 SDK）/102（rlz win）/103（icacls GBK）三补丁入库。
-- **W2 已完成（win 端 os_crypt 补丁，2026-10-26）**：100-os-crypt-key.patch 补齐第四文件
-  `os_crypt_win.cc`——switch 注入 16B 密钥跳过 DPAPI/Local State；**漫游模式对齐 mac/linux
-  v11 线格式（AES-128-CBC/16B key/16 空格 IV）**，同一 profile 三平台互解；v10/DPAPI 原生
-  路径与无 switch 行为不变。对 googlesource 148 原始源码双通道验证（git apply + GNU patch）
-  干净应用、逐字节复现；顺带排掉补丁文件被 autocrlf 转 CRLF 的地雷（.gitattributes 补
-  `*.patch eol=lf`）。**核验结论：三端密钥均为 16B，产品侧 16B 派生本就正确**。
-- **W1 已完成（Windows 全链路验证通过，tag `v0.4.0-win-prepared`）**：builtin e2e 17/17 ·
-  kernel-smoke(docker) 7/7 · kernel-smoke(native 官方 win 内核) 6/6 · e2e:fp 10/10 ·
-  e2e:interop 13/13 · e2e:l2 7/7 · Go 单测全绿。kernelManager win 分支（下载/解压/自检）实战验证。
-- **Windows 环境落地**：Node 24 + pnpm 12 + Go 1.24（GOTOOLCHAIN=auto 自动拉 1.26）+ Docker Desktop；
-  本地 S3 用 localstack 3.8.1（MinIO 已全渠道停发）；Postgres 容器因宿主 5432 被原生服务占用
-  改映射 55432（`deploy/docker-compose.override.yml`，不入库）。
-- **Windows 十二坑全部修复入库**（详见 `docs/windows-migration.md`「W1 完成纪要」）：CRLF/
-  docker build 上下文/chrome.exe --version 行为/**150 win 内核 canvas 死锁（KNOWN_BAD 规避选 148）**/
-  容器挂载路径/无扩展名 spawn/go build 管道继承/GNU tar 盘符/Singleton LX symlink/迁移竞态等。
-- **平台策略变更**：mac(Intel) 编译 Chromium 太慢（前台占用 1.5–2 天），开发切到 Windows。
-- **mac 构建现场已存档**：`/Users/macos/Code/ob-kernel-build/` 停在 [2500/42722]（工具链+增量缓存全在，`ninja -C out/OneBrowser chrome` 可续）；九个构建坑全部记录在 `scripts/kernel-build/README.md`。
-- **V0.4 进度**：B（mac 安装包）✅ C（生产硬化）✅；A 的 mac/linux 补丁+产品接线 ✅，win 端补丁与三端自建内核转 Windows 继续（W2–W4）。
-- **V0.4-A 构建现场（网络大坑已排平，全链路看护中）**：机器 10-24 前后重启杀过流水线；本周排掉三个连环坑——①googlesource/GitHub 需走系统代理（127.0.0.1:7897，构建命令须显式注入）；②rust-src 与 llvm monorepo 的 googlesource 镜像不可达，build_rust.py/build.py 的 GIT_URL 已改 GitHub 官方源；③chromium 专属 llvm tag（llvmorg-23-init-5669-g8a0be0bc）在 GitHub 无同名 tag，已手动造 tag 指向同 commit（8a0be0bc3772…）实现复用。**当前：rust 工具链 LLVM 编译中（14:27 起）**，看护脚本自动接力 gn gen→autoninja（/tmp/ob-pipeline.log）；补丁代码未动，PoC 等产物。
-- **V0.3.1 已完成**
+- **UI/UX 交互优化整合已完成（本工作单元）**：管理界面从「能用」到「好用」——
+  ①登录页注册态强制「主密码不可找回」警示+勾选确认（E2E 数据安全底线）；②新建/编辑对话框
+  模式与承载改为说明卡片；编辑首次接入指纹三件套/种子/代理清除/承载切换（主进程 updateEnv
+  早已支持、UI 一直没接）；③环境详情抽屉（种子可复制/指纹/代理/基线/租约全量展示）；
+  ④快照模式「丢弃改动关闭」二次确认、登出确认、每行操作 busy 态；⑤内核状态 popover
+  （版本/来源/下载进度条/本地导入/未就绪小红点）；⑥空状态三步引导+CTA、帮助弹卡、
+  错误信息美化（剥 Electron IPC 包装）。主进程新增 ob:appInfo / ob:sync，updateEnv 放开
+  seed（isValidSeed 防 KI-1 毒化）/proxy null 清除。截图冒烟升级 `--screenshot-tour`
+  六站巡航（注册视图→空态→新建→表格→详情→编辑）。
+  **验证**：typecheck 双绿 · builtin e2e 17/17（7.3s）· 六站截图逐张目检通过。
+- **V0.4.1 已发版（tag `v0.4.1`）**：标准浏览器承载（本机 Edge/Chrome，无指纹免下载）；
+  打包形态双绿（e2e 17/17 + browser-smoke 3/3）；Edge 启动器进程交接与 156 flatten 移除
+  两大坑修复（attachPageDirect 页级直连 ws）。
+- **W3 已砍削暂停（范围决策）**：win 自建内核构建现场存档 `D:/ob-kernel-build`
+  （停在 chrome.dll 链接段，`bootstrap-win.sh` 全程可复现，ninja 续跑即可出包）；
+  win 原生 L2 缺口改走「上游 PR 优先、自建内核为可选高级件」路线。
+- **V0.4.0 已发版（tag `v0.4.0`）**：Windows 安装包（nsis 120MB，未签名）实测验收；
+  W1 全链路验证矩阵全绿（builtin 17/17 · smoke-docker 7/7 · smoke-native 6/6 · fp 10/10 ·
+  interop 13/13 · l2 7/7 · Go 全绿）；W2 win 端 os_crypt 补丁入库（漫游模式对齐 mac/linux
+  v11 线格式，三平台互解）。
+- **Windows 十二坑全部修复入库**（详见 `docs/windows-migration.md`）：CRLF/docker 上下文/
+  chrome.exe --version 行为/**150 win 内核 canvas 死锁（KNOWN_BAD 规避选 148）**/容器挂载
+  路径/无扩展名 spawn/go build 管道继承/GNU tar 盘符/Singleton LX symlink/迁移竞态等。
+- **运行环境**：server(:8787，DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) /
+  Postgres(docker :55432) / localstack S3(:4566) 本机常驻；本地 S3 用 localstack 3.8.1
+  （MinIO 已全渠道停发）。
+- **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；
+  镜像 `onebrowser-kernel-smoke`）。
 
-- **V0.4-A 准备件 + V0.4-C 生产硬化已完成**：os_crypt 注入补丁（148 精确 diff）+ 构建脚本；限流/配额/深度健康检查 + 生产 compose（Caddy TLS）+ production.md；全量回归限流下全绿
-- **V0.4-B mac 安装包已完成**：electron-builder 双架构 dmg（x64 144MB / arm64 140MB，ad-hoc 签名，不带内核首用下载）；**安装包内 app 实测 builtin e2e 17/17 + UI 截图冒烟通过**（asar/CJS preload/依赖收集全对）；`make dist-mac`
-- **V0.3.1 已完成**：L2 快照 zstd 压缩（36KB vs gzip 50KB）+ 观测日志；修复 macOS bsdtar 流式 zstd 两大坑（stdout 静默截断 / stdin fork 失败 → 临时文件中转）；回归 l2 7/7 · interop 13/13
-- **V0.4 规划已出**（`docs/v0.4.0-plan.md`）：原生内核 + os_crypt 补丁（148 源码先行）/ 安装包分发 / 生产硬化；builtin L2 评估结论=不做（L1 回退已闭环）
-- **V0.3.0 已发版**：L2 文件级快照全链路（kernel 环境 profile 整体漫游 + 双写 L1 副本互迁移兜底）；验证基线 l2 7/7 · interop 13/13 · fp 10/10 · builtin 17/17 · kernel-smoke 7/7
-- **M6 预研已完成（GO）**：Linux 内核 profile 目录原样拷贝即可漫游（cookie/localStorage/IndexedDB 全部读回，`apps/desktop/scripts/os-crypt-roaming-poc.mjs` 可复跑）；无需 os_crypt 补丁；教训：会话 cookie 重启即弃曾致误判（`docs/m6-research.md`）
+## 下一步（按优先级）
 
-- **版本**：V0.2.0 已发版（tag `v0.2.0`）——双承载（builtin ⇄ kernel 指纹内核）+ 代理/auto 时区 + 保留策略 + 会话健康检查
-- **验证基线**：Go 测试（auth/leases/snapshots/testsite）· typecheck · kernel-smoke 7/7 · builtin e2e 17/17 · interop 12/12 · fp e2e 10/10（全绿）
-- **KI-1/KI-2 已解决**：根因均为非法 seed（必须 32 位整数，读取 `navigator.hardwareConcurrency` 即死锁）；客户端已强校验 + 旧数据回填
-- **运行环境**：server(:8787，DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) / Postgres(docker :55432) / localstack S3(:4566) 本机常驻
-- **内核验证环境**：`scripts/kernel-docker/`（Linux x64 内核 + Xvfb + SwiftShader + socat；镜像 `onebrowser-kernel-smoke`）
-
-## 下一步（按优先级；V0.4.0 初步可用已发版）
-
-1. **0.4.1 安装包重出 + 冒烟**（dist:win 进行中），随后按节奏：安装包分发与体验补强：代码签名证书（现未签名，SmartScreen 会拦）；正式图标；
-   electron-updater 自动更新（V0.5 已规划，可提前）。
-2. **Win 原生 L2（不阻塞）**：os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游；
+1. **推送远端**：`git push origin main --tags`（v0.4.0 / v0.4.0-win-prepared / v0.4.1 及全部提交仍在本地）。
+2. **0.4.2 安装包重出 + 打包形态验收**（含本次 UI/UX 优化；dist:win → 静默安装 → e2e + tour 截图）；
+   随后：代码签名证书（现未签名，SmartScreen 会拦）、正式图标、electron-updater 自动更新。
+3. **Win 原生 L2（不阻塞）**：os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游；
    接受则 Windows L2 免费跟随官方发布；拒绝则 W3 存档的自建内核作为可选高级件
    （构建现场 `D:/ob-kernel-build` 停在 chrome.dll 链接段，`bootstrap-win.sh` 可复现，
    ninja 续跑即可出包）。
-3. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy）。
-4. **V0.5 规划**：增量快照、自动更新、团队协作。
+4. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy）。
+5. **V0.5 规划**：增量快照、自动更新、团队协作。
 
 ## 已完成归档
+
+- **[2026-10-27] UI/UX 交互优化整合（V0.4.2 待发）**：注册主密码不可找回警示+勾选门禁；
+  新建/编辑对话框说明卡片化，编辑接入指纹三件套/种子/代理清除/承载切换（updateEnv 既有
+  能力 UI 首次接线，seed 补丁走 isValidSeed 防 KI-1）；环境详情抽屉（种子复制/指纹/代理/
+  基线/租约）；快照丢弃关闭二次确认 + 登出确认 + 每行 busy；内核 popover（进度条/来源/
+  导入/未就绪提醒点）；空状态三步引导；帮助弹卡；错误信息剥 Electron IPC 包装（fmt.ts）。
+  主进程：ob:appInfo / ob:sync / updateEnv seed+proxy-null；截图冒烟新增 `--screenshot-tour`
+  六站巡航。验证：typecheck 双绿 · e2e 17/17 · 六站截图目检。
 
 - **[2026-10-27] V0.4.0 初步可用发版（tag `v0.4.0`）**：Windows 安装包（nsis 120MB，未签名）
   实测验收——静默安装 → builtin e2e 17/17（7.6s）→ 原生内核冒烟 6/6（官方 148 自动下载）；

@@ -8,6 +8,7 @@ import { onMounted, onUnmounted, provide, ref } from 'vue'
 import { ElNotification } from 'element-plus'
 import type { AppState, KernelStatus, MainEvent } from '@shared/types'
 import { ob } from './api'
+import { errMsg } from './fmt'
 import LoginPage from './pages/LoginPage.vue'
 import EnvsPage from './pages/EnvsPage.vue'
 
@@ -28,7 +29,7 @@ async function refresh(): Promise<void> {
       lastEmail.value = state.value.account.email
     }
   } catch (e) {
-    ElNotification.error({ title: '状态获取失败', message: String(e) })
+    ElNotification.error({ title: '状态获取失败', message: errMsg(e) })
   }
 }
 

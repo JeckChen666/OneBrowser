@@ -419,19 +419,24 @@ export class AppService {
     patch: {
       name?: string
       homepage?: string
-      proxy?: ProxyConfig
+      proxy?: ProxyConfig | null // null=清除代理；undefined=不修改
       fingerprint?: EnvConfig['fingerprint']
       hosting?: EnvConfig['hosting']
+      seed?: string
       sessionCheck?: EnvConfig['sessionCheck'] | null
     }
   ): Promise<void> {
     const cur = this.envs.get(id)
     if (!cur) throw new Error('环境不存在')
+    if (patch.seed !== undefined && !isValidSeed(patch.seed)) {
+      // 非法 seed 会毒化内核（KI-1）：必须在此拦下，不能静默换值
+      throw new Error('指纹种子必须是 1~2147483647 的整数')
+    }
     const configEnc = await sealConfig(this.dek!, id, {
       hosting: patch.hosting !== undefined ? patch.hosting : cur.hosting,
       homepage: patch.homepage !== undefined ? patch.homepage : cur.homepage,
-      seed: cur.seed,
-      proxy: patch.proxy !== undefined ? patch.proxy : cur.proxy,
+      seed: patch.seed !== undefined ? patch.seed : cur.seed,
+      proxy: patch.proxy !== undefined ? (patch.proxy === null ? undefined : patch.proxy) : cur.proxy,
       fingerprint: patch.fingerprint !== undefined ? patch.fingerprint : cur.fingerprint,
       // null=显式清除；undefined=不修改
       sessionCheck: patch.sessionCheck == null ? (patch.sessionCheck === null ? undefined : cur.sessionCheck) : patch.sessionCheck,

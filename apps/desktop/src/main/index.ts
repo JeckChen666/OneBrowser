@@ -13,6 +13,7 @@ const e2eMode =
   process.argv.includes('--e2e-l2') ||
   process.argv.includes('--kernel-smoke') ||
   process.argv.includes('--screenshot') ||
+  process.argv.includes('--screenshot-tour') ||
   process.argv.includes('--screenshot-loggedin')
 
 let svc: AppService
@@ -52,6 +53,7 @@ function registerIPC(): void {
     })
   }
   handle('ob:getState', () => svc.getState())
+  handle('ob:sync', () => svc.refreshEnvs())
   handle('ob:register', (email: string, password: string) => svc.register(email, password))
   handle('ob:login', (email: string, password: string) => svc.login(email, password))
   handle('ob:logout', () => svc.logout())
@@ -63,11 +65,19 @@ function registerIPC(): void {
       patch: {
         name?: string
         homepage?: string
-        proxy?: ProxyConfig
+        proxy?: ProxyConfig | null
+        fingerprint?: import('@shared/types').FingerprintConfig
+        hosting?: import('@shared/types').Hosting
+        seed?: string
         sessionCheck?: { urlPath: string; loggedInMarker: string } | null
       }) =>
       svc.updateEnv(id, patch)
   )
+  handle('ob:appInfo', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    platform: process.platform
+  }))
   handle('ob:deleteEnv', (id: string) => svc.deleteEnv(id))
   handle('ob:openEnv', (id: string) => svc.openEnv(id))
   handle('ob:closeEnv', (id: string) => svc.closeEnv(id))
@@ -201,6 +211,23 @@ app.whenReady().then(async () => {
       path.join(appDir, '../preload/index.cjs'),
       path.join(appDir, '../renderer/index.html'),
       out || '/tmp/ob-manager.png'
+    )
+    return
+  }
+
+  const tourIdx = process.argv.indexOf('--screenshot-tour')
+  if (tourIdx !== -1) {
+    svc = new AppService(serverUrl, sendEvent)
+    registerIPC()
+    const { tourManager } = await import('./screenshot')
+    await tourManager(
+      path.join(appDir, '../preload/index.cjs'),
+      path.join(appDir, '../renderer/index.html'),
+      process.argv[tourIdx + 1] || 'C:/temp/ob-ui-tour',
+      { email: `tour-${Date.now()}@t.local`, password: 'tour-password-123' },
+      (w) => {
+        managerWin = w // 状态推送（登录后切页）需要指向本窗口
+      }
     )
     return
   }
