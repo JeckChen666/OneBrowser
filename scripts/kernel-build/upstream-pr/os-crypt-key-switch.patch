@@ -1,0 +1,238 @@
+--- a/components/os_crypt/common/os_crypt_switches.h
++++ b/components/os_crypt/common/os_crypt_switches.h
+@@ -19,6 +19,12 @@ inline constexpr char kUseMockKeychain[] = "use-mock-keychain";
+ 
+ #endif  // BUILDFLAG(IS_APPLE)
+ 
++// per-environment os_crypt key as hex (must decode to exactly the
++// derived-key size). When present, key derivation bypasses the OS key store so
++// the profile can roam across devices; the key is derived from the user's DEK
++// on the client side.
++inline constexpr char kOsCryptKey[] = "os-crypt-key";
++
+ }  // namespace os_crypt::switches
+ 
+ #endif  // COMPONENTS_OS_CRYPT_COMMON_OS_CRYPT_SWITCHES_H_
+--- a/components/os_crypt/sync/os_crypt_linux.cc
++++ b/components/os_crypt/sync/os_crypt_linux.cc
+@@ -10,15 +10,18 @@
+ #include <iterator>
+ #include <memory>
+ 
++#include "base/command_line.h"
+ #include "base/logging.h"
+ #include "base/memory/singleton.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/string_view_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/synchronization/lock.h"
+ #include "base/task/single_thread_task_runner.h"
++#include "components/os_crypt/common/os_crypt_switches.h"
+ #include "components/os_crypt/sync/key_storage_config_linux.h"
+ #include "components/os_crypt/sync/key_storage_linux.h"
+ #include "components/os_crypt/sync/os_crypt_metrics.h"
+@@ -303,6 +306,28 @@ bool OSCryptImpl::DeriveV11Key() {
+     return true;
+   }
+ 
++  // --os-crypt-key=<hex> injects the derived key directly,
++  // bypassing the system key store so the profile can roam across devices.
++  {
++    const base::CommandLine* cmd =
++        base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch(os_crypt::switches::kOsCryptKey)) {
++      std::string hex_key =
++          cmd->GetSwitchValueASCII(
++              os_crypt::switches::kOsCryptKey);
++      std::string key_bytes;
++      if (base::HexStringToString(hex_key, &key_bytes) &&
++          key_bytes.size() == OSCryptImpl::kDerivedKeyBytes) {
++        std::array<uint8_t, OSCryptImpl::kDerivedKeyBytes> derived_key;
++        base::as_writable_byte_span(derived_key).copy_from(
++            base::as_byte_span(key_bytes));
++        v11_key_ = derived_key;
++        try_v11_ = true;
++        return true;
++      }
++    }
++  }
++
+   std::unique_ptr<KeyStorageLinux> key_storage;
+   if (storage_provider_factory_for_testing_) {
+     key_storage = std::move(storage_provider_factory_for_testing_).Run();
+--- a/components/os_crypt/sync/os_crypt_mac.mm
++++ b/components/os_crypt/sync/os_crypt_mac.mm
+@@ -16,6 +16,7 @@
+ #include "base/logging.h"
+ #include "base/memory/singleton.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_view_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/synchronization/lock.h"
+@@ -119,6 +120,28 @@ void OSCryptImpl::SetKeychainForTesting(
+ bool OSCryptImpl::DeriveKey() {
+   base::AutoLock auto_lock(OSCryptImpl::GetLock());
+ 
++  // --os-crypt-key=<hex> injects the derived key directly,
++  // bypassing the Keychain so the profile can roam across devices.
++  if (!key_) {
++    const base::CommandLine* cmd =
++        base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch(os_crypt::switches::kOsCryptKey)) {
++      std::string hex_key =
++          cmd->GetSwitchValueASCII(
++              os_crypt::switches::kOsCryptKey);
++      std::string key_bytes;
++      if (base::HexStringToString(hex_key, &key_bytes) &&
++          key_bytes.size() == kDerivedKeySize) {
++        std::array<uint8_t, kDerivedKeySize> derived_key;
++        base::as_writable_byte_span(derived_key).copy_from(
++            base::as_byte_span(key_bytes));
++        key_ = derived_key;
++        try_keychain_ = false;
++        return true;
++      }
++    }
++  }
++
+   // Fast fail when there's no key and derivation already failed in an earlier
+   // call to DeriveKey().
+   if (!try_keychain_ && !key_) {
+--- a/components/os_crypt/sync/os_crypt_win.cc
++++ b/components/os_crypt/sync/os_crypt_win.cc
+@@ -8,9 +8,14 @@
+ 
+ #include <wincrypt.h>
+ 
++#include <array>
++#include <optional>
++#include <vector>
++
+ #include "base/base64.h"
+ #include "base/check.h"
+ #include "base/check_op.h"
++#include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/feature_list.h"
+ #include "base/logging.h"
+@@ -18,13 +23,16 @@
+ #include "base/metrics/histogram_functions.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/sys_string_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "components/os_crypt/common/os_crypt_switches.h"
+ #include "components/prefs/pref_registry_simple.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/version_info/version_info.h"
+ #include "crypto/aead.h"
++#include "crypto/aes_cbc.h"
+ #include "crypto/hkdf.h"
+ #include "crypto/random.h"
+ 
+@@ -49,6 +57,28 @@ constexpr char kEncryptionVersionPrefix[] = "v10";
+ // Key prefix for a key encrypted with DPAPI.
+ constexpr char kDPAPIKeyPrefix[] = "DPAPI";
+ 
++// roaming os_crypt wire format, identical to the mac/linux
++// implementations in components/os_crypt — AES-CBC with the injected key and
++// this fixed IV, tagged "v11". When --os-crypt-key is active we write this
++// format so a profile roams across platforms with one key.
++constexpr char kRoamingEncryptionVersionPrefix[] = "v11";
++
++// key length accepted for --os-crypt-key (the mac/linux v11 keys
++// are 16 bytes; crypto::aes_cbc maps that to AES-128).
++constexpr size_t kRoamingKeyLength = 16;
++
++// the mac/linux os_crypt IV (16 spaces).
++constexpr std::array<uint8_t, crypto::aes_cbc::kBlockSize> kRoamingIv{
++    ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
++    ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
++};
++
++// whether per-environment key injection is active.
++bool RoamingKeyActive() {
++  return base::CommandLine::ForCurrentProcess()->HasSwitch(
++      os_crypt::switches::kOsCryptKey);
++}
++
+ bool EncryptStringWithDPAPI(const std::string& plaintext,
+                             std::string* ciphertext) {
+   DATA_BLOB input;
+@@ -199,6 +229,20 @@ bool OSCryptImpl::EncryptString(const std::string& plaintext,
+   if (use_legacy_)
+     return EncryptStringWithDPAPI(plaintext, ciphertext);
+ 
++  // roaming mode writes the mac/linux v11 wire format (AES-CBC,
++  // 16-byte injected key, fixed IV) so the same profile decrypts on every
++  // platform. Only runs when the key was actually injected via the switch.
++  if (encryption_key_.size() == kRoamingKeyLength &&
++      RoamingKeyActive()) {
++    *ciphertext = kRoamingEncryptionVersionPrefix;
++    const std::vector<uint8_t> encrypted = crypto::aes_cbc::Encrypt(
++        base::as_byte_span(encryption_key_), kRoamingIv,
++        base::as_byte_span(plaintext));
++    ciphertext->append(encrypted.begin(),
++                       encrypted.end());
++    return true;
++  }
++
+   crypto::Aead aead(crypto::Aead::AES_256_GCM);
+ 
+   const auto key = GetRawEncryptionKey();
+@@ -221,6 +265,27 @@ bool OSCryptImpl::EncryptString(const std::string& plaintext,
+ 
+ bool OSCryptImpl::DecryptString(const std::string& ciphertext,
+                             std::string* plaintext) {
++  // v11 is the mac/linux os_crypt marker (AES-CBC with the
++  // injected 16-byte key). Accept it so a roaming profile created on any
++  // platform decrypts natively — win never writes v11 outside the roaming
++  // path and DPAPI blobs are binary, so no existing data can be misread.
++  if (base::StartsWith(ciphertext, kRoamingEncryptionVersionPrefix,
++                       base::CompareCase::SENSITIVE)) {
++    if (encryption_key_.size() != kRoamingKeyLength) {
++      return false;
++    }
++    const std::string raw =
++        ciphertext.substr(sizeof(kRoamingEncryptionVersionPrefix) - 1);
++    std::optional<std::vector<uint8_t>> plain =
++        crypto::aes_cbc::Decrypt(base::as_byte_span(encryption_key_),
++                                 kRoamingIv,
++                                 base::as_byte_span(raw));
++    if (!plain) {
++      return false;
++    }
++    plaintext->assign(plain->begin(), plain->end());
++    return true;
++  }
+   if (!base::StartsWith(ciphertext, kEncryptionVersionPrefix,
+                         base::CompareCase::SENSITIVE))
+     return DecryptStringWithDPAPI(ciphertext, plaintext);
+@@ -276,6 +341,21 @@ bool OSCryptImpl::Init(PrefService* local_state) {
+ }
+ 
+ OSCrypt::InitResult OSCryptImpl::InitWithExistingKey(PrefService* local_state) {
++  // --os-crypt-key=<hex> injects the roaming key directly (the
++  // same 16-byte HKDF-derived key as the mac/linux implementations),
++  // bypassing DPAPI and the Local State copy so the profile can roam across
++  // devices. Invalid values fall through to the native path.
++  if (encryption_key_.empty() && RoamingKeyActive()) {
++    const std::string hex_key =
++        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++            os_crypt::switches::kOsCryptKey);
++    std::string key_bytes;
++    if (base::HexStringToString(hex_key, &key_bytes) &&
++        key_bytes.size() == kRoamingKeyLength) {
++      encryption_key_.assign(key_bytes);
++      return OSCrypt::kSuccess;
++    }
++  }
+   DCHECK(encryption_key_.empty()) << "Key already exists.";
+   // Try and pull the key from the local state.
+   if (!local_state->HasPrefPath(kOsCryptEncryptedKeyPrefName))

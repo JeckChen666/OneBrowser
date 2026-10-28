@@ -12,10 +12,21 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-27，已推送远端；V0.4.2 含品牌图标）
+## 当前状态（快照，2026-10-28，V0.5 规划与上游 PR 材料就绪）
 
-- **已推送远端**：`git push origin main --tags` 完成——main 全部提交 + v0.4.0 /
-  v0.4.0-win-prepared / v0.4.1 / v0.4.2 四个 tag 现于 github.com/JeckChen666/OneBrowser。
+- **已推送远端**：main 全部提交 + v0.4.0 / v0.4.0-win-prepared / v0.4.1 / v0.4.2 四个
+  tag 均在 github.com/JeckChen666/OneBrowser（本地积压清零，后续随提交即推）。
+- **V0.5 规划已出（本工作单元）**：`docs/v0.5.0-plan.md`——①自动更新两阶段
+  （a 无签名过渡「检查更新→直达 Releases」/ b 证书到位后 electron-updater 全量差分，
+  blockmap 原料已在产出）；②增量快照**先量化后决定**（决策门：50MB 档二次保存
+  <5s 则不做；若做走客户端编排方案，服务端零改动——per-snapshot 密钥派生本就支持）；
+  ③团队协作 E2E 设计定稿（用户 X25519 身份密钥对 + team DEK 成员信封 + 吊销=轮换，
+  实现切 V0.6）。V0.5 最小交付 = A+B 共 5 天，无外部依赖。
+- **os_crypt 上游 PR 材料已备（未提交，等用户过目）**：`scripts/kernel-build/upstream-pr/`
+  ——中性化补丁 `os-crypt-key-switch.patch`（品牌措辞与 onebrowser_* 标识符全替换；
+  离线往返法验证与原补丁逐 hunk 等价：本地 148 树逆向还原原始文件后干净应用）+
+  英文 PR 文案 `pr-body-draft.md`（动机/三平台改动/兼容性/测试证据）。目标
+  `adryfish/fingerprint-chromium`；101–107 工具链补丁明确排除。
 - **品牌图标已落地（本工作单元）**：`build/icon.svg`（蓝底白色指纹涡纹×地球经纬，
   椭圆缺口同心环设计）→ `scripts/gen-icon.mjs`（sharp 渲染 512px）→ `build/icon.png`
   → electron-builder 自动转 ico/icns。默认 Electron 图标警告消失，exe 内嵌图标已抽取
@@ -41,8 +52,10 @@
   （停在 chrome.dll 链接段，`bootstrap-win.sh` 全程可复现，ninja 续跑即可出包）。
 - **V0.4.0/V0.4.1 已发版**：win 安装包两条线验收过（0.4.0 双绿、0.4.1 双绿）；150 win
   内核 canvas 死锁 KNOWN_BAD 规避选 148；Edge 启动器交接与 156 flatten 移除两坑修复。
-- **运行环境**：server(:8787，现带 ADMIN_TOKEN=dev-admin-123 于后台跑) /
-  test-site(:18080) / Postgres(:55432) / localstack S3(:4566) 本机常驻。
+- **运行环境**：server(:8787，dev 实例隔夜重启后需手动拉起：ADMIN_TOKEN=dev-admin-123
+  + DATABASE_URL→:55432 + S3_ENDPOINT→:4566) / test-site(:18080) / Postgres(:55432) /
+  localstack S3(:4566)；**注意本机代理 127.0.0.1:7897 重启后也需手动拉起**（googlesource
+  等外网依赖它，本轮即因未起改走离线验证）。
 - **V0.4.1 已发版（tag `v0.4.1`）**：标准浏览器承载（本机 Edge/Chrome，无指纹免下载）；
   打包形态双绿（e2e 17/17 + browser-smoke 3/3）；Edge 启动器进程交接与 156 flatten 移除
   两大坑修复（attachPageDirect 页级直连 ws）。
@@ -64,18 +77,22 @@
 
 ## 下一步（按优先级）
 
-1. **代码签名证书**（需用户决策采购）：现未签名，SmartScreen 会拦；签发后 electron-builder.yml
-   补 win.sign 配置即可（图标管线已闭环）。正式图标 ✅。
-2. **os_crypt 4 文件补丁提 PR 给 fingerprint-chromium 上游**（外发动作，PR 文案需确认）；
-   接受则 Windows L2 免费跟随官方发布；拒绝则 W3 存档的自建内核作为可选高级件
-   （构建现场 `D:/ob-kernel-build` 停在 chrome.dll 链接段，`bootstrap-win.sh` 可复现，
-   ninja 续跑即可出包）。
-3. **服务端生产部署演练**：deploy/production.md 全流程走一遍（域名 + TLS + Caddy），
-   含 ADMIN_TOKEN 开通运维工作台的实操验证。
-4. **V0.5 规划**：增量快照、electron-updater 自动更新、团队协作；可选：工作台增写操作
-  （账号停用/配额调整，需 users 表加列 + auth 中间件拦截）。
+1. **V0.5-A 实施（无外部依赖，计划估时 3 天）**：阶段 a 自动更新（publish:github 配置 +
+   「检查更新」入口 + Releases 直达）+ 增量快照量化决策门（三档 profile 实测）。
+2. **V0.5-B：团队协作设计定稿**（身份密钥对/团队 DEK 信封/吊销语义 + 迁移草案与
+   时序图，写入计划文档附录，估时 2 天）。
+3. **os_crypt 上游 PR 提交**：材料在 `scripts/kernel-build/upstream-pr/`，
+   **需用户过目 pr-body-draft.md 后放行**（对外动作）。
+4. **代码签名证书**（需用户决策采购）：签发后随 V0.5-C 全量自动更新一起接入。
+5. **服务端生产部署演练**：需域名与对外主机；production.md 流程已备（含 ADMIN_TOKEN）。
 
 ## 已完成归档
+
+- **[2026-10-28] V0.5 规划 + os_crypt 上游 PR 材料**：`docs/v0.5.0-plan.md`（自动更新
+  两阶段/增量快照量化门/团队协作 E2E 设计，含里程碑与裁剪顺序）；`scripts/kernel-build/
+  upstream-pr/`（中性化补丁 + 英文 PR 文案 + 操作指南；离线往返法验证中性化补丁与原补丁
+  逐 hunk 等价——本地 148 树逆向还原原始四文件后干净应用；googlesource 不可达因代理
+  未起，已记入运行环境注意事项）。
 
 - **[2026-10-27] V0.4.2 打包验收三绿（tag `v0.4.2`）**：版本 0.4.1→0.4.2，dist:win 出包；
   打包形态静默安装 → e2e 17/17 → browser-smoke 3/3 → screenshot-tour 六站确定性取帧全过。
