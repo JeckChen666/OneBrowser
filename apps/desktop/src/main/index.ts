@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AppService } from './core/appService'
+import { checkUpdate, openExternal } from './updater'
 import type { CreateEnvInput, MainEvent, ProxyConfig } from '@shared/types'
 
 const serverUrl = process.env.ONEBROWSER_SERVER || 'http://127.0.0.1:8787'
@@ -83,6 +84,8 @@ function registerIPC(): void {
     electron: process.versions.electron,
     platform: process.platform
   }))
+  handle('ob:checkUpdate', () => checkUpdate())
+  handle('ob:openUrl', (url: string) => openExternal(url))
   handle('ob:deleteEnv', (id: string) => svc.deleteEnv(id))
   handle('ob:openEnv', (id: string) => svc.openEnv(id))
   handle('ob:closeEnv', (id: string) => svc.closeEnv(id))

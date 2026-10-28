@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppInfo, AppState, CreateEnvInput, FingerprintConfig, Hosting, KernelStatus, MainEvent, ProxyConfig } from '@shared/types'
+import type {
+  AppInfo,
+  AppState,
+  CreateEnvInput,
+  FingerprintConfig,
+  Hosting,
+  KernelStatus,
+  MainEvent,
+  ProxyConfig,
+  UpdateCheck
+} from '@shared/types'
 
 interface IpcResult<T> {
   ok: boolean
@@ -15,6 +25,8 @@ const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> =>
 
 const api = {
   appInfo: (): Promise<AppInfo> => invoke('ob:appInfo'),
+  checkUpdate: (): Promise<UpdateCheck> => invoke('ob:checkUpdate'),
+  openUrl: (url: string): Promise<void> => invoke('ob:openUrl', url),
   getState: (): Promise<AppState> => invoke('ob:getState'),
   register: (email: string, password: string): Promise<void> => invoke('ob:register', email, password),
   login: (email: string, password: string): Promise<void> => invoke('ob:login', email, password),

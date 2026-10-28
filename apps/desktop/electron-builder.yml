@@ -8,6 +8,13 @@ directories:
   output: release
   buildResources: build
 
+# 更新分发：GitHub Releases（V0.5 阶段 a「检查更新」直达下载页；阶段 b 切 electron-updater
+# 全量差分时此配置即更新源；发布：electron-builder --win --publish=always + GH_TOKEN）
+publish:
+  provider: github
+  owner: JeckChen666
+  repo: OneBrowser
+
 files:
   # electron-vite 产物（main 为 ESM .mjs；preload 为 CJS .cjs——沙箱渲染器要求）
   - out/**
@@ -34,4 +41,4 @@ linux:
   category: Utility
   artifactName: ${productName}-${version}-${arch}.AppImage
 
-# 图标待设计（build/icon.* 缺省时使用 Electron 默认图标）
+# 图标：build/icon.png（sharp 从 icon.svg 渲染，scripts/gen-icon.mjs），builder 自动转 ico/icns

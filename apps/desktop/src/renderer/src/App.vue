@@ -33,6 +33,28 @@ async function refresh(): Promise<void> {
   }
 }
 
+// 24h 节流的后台更新检查（V0.5 阶段 a）：有新版 → 常驻通知，点击直达下载页
+async function bgUpdateCheck(): Promise<void> {
+  const last = Number(localStorage.getItem('ob:lastUpdateCheck') || 0)
+  if (Date.now() - last < 24 * 3600 * 1000) return
+  localStorage.setItem('ob:lastUpdateCheck', String(Date.now()))
+  try {
+    const r = await ob.checkUpdate()
+    if (r.hasUpdate && r.releaseUrl) {
+      ElNotification.info({
+        title: `发现新版 v${r.latest}`,
+        message: '点击此处打开下载页（当前版本不会自动安装）',
+        duration: 0,
+        onClick: () => {
+          void ob.openUrl(r.releaseUrl || '')
+        }
+      })
+    }
+  } catch {
+    /* 后台检查失败不打扰 */
+  }
+}
+
 onMounted(() => {
   off = ob.onEvent((e: MainEvent) => {
     if (e.type === 'state') state.value = e.state
@@ -48,6 +70,7 @@ onMounted(() => {
     kernelStatus.value = s
   })
   refresh()
+  bgUpdateCheck()
 })
 
 onUnmounted(() => off?.())

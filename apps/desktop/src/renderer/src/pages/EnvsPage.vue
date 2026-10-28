@@ -3,7 +3,25 @@
     <header class="topbar">
       <div class="title">
         <h1>🌐 OneBrowser</h1>
-        <span v-if="appVersion" class="ver">v{{ appVersion }}</span>
+        <el-popover v-if="appVersion" placement="bottom-start" width="300" trigger="click">
+          <template #reference>
+            <span class="ver link">v{{ appVersion }} ⌄</span>
+          </template>
+          <div class="about-pop">
+            <div class="ap-title">OneBrowser v{{ appVersion }}</div>
+            <div v-if="electronVersion" class="ap-dim">Electron {{ electronVersion }}</div>
+            <div v-if="updateResult" class="ap-update">
+              <template v-if="updateResult.hasUpdate">
+                发现新版 <b>v{{ updateResult.latest }}</b>
+                <el-button size="small" type="primary" @click="ob.openUrl(updateResult.releaseUrl || '')">
+                  打开下载页
+                </el-button>
+              </template>
+              <span v-else class="ap-dim">已是最新{{ updateResult.latest ? `（v${updateResult.latest}）` : '' }}</span>
+            </div>
+            <el-button size="small" :loading="checking" class="ap-check" @click="doCheckUpdate">检查更新</el-button>
+          </div>
+        </el-popover>
       </div>
       <div class="account">
         <span class="email">{{ state.account.email }}</span>
@@ -436,7 +454,7 @@
 <script setup lang="ts">
 import { computed, inject, reactive, ref, type Ref } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import type { AppState, EnvMode, EnvView, Hosting, KernelStatus, ProxyConfig } from '@shared/types'
+import type { AppState, EnvMode, EnvView, Hosting, KernelStatus, ProxyConfig, UpdateCheck } from '@shared/types'
 import { ob } from '../api'
 import { errMsg, fmtTimeFull, fmtTimeShort } from '../fmt'
 
@@ -446,7 +464,23 @@ const emit = defineEmits<{ refresh: [] }>()
 const kernel = inject<Ref<KernelStatus | null>>('kernelStatus', ref(null))
 const kernelBusy = ref(false)
 const appVersion = ref('')
-ob.appInfo().then((i) => (appVersion.value = i.version)).catch(() => undefined)
+const electronVersion = ref('')
+ob.appInfo().then((i) => {
+  appVersion.value = i.version
+  electronVersion.value = i.electron
+}).catch(() => undefined)
+
+// 关于弹层的「检查更新」（V0.5 阶段 a：报告 + 直达 Releases，不自动安装）
+const checking = ref(false)
+const updateResult = ref<UpdateCheck | null>(null)
+async function doCheckUpdate(): Promise<void> {
+  checking.value = true
+  try {
+    updateResult.value = await ob.checkUpdate()
+  } finally {
+    checking.value = false
+  }
+}
 
 const loading = ref(false)
 const creating = ref(false)
@@ -806,6 +840,34 @@ function phaseText(p: string): string {
 .ver {
   font-size: 12px;
   color: #b0b9c6;
+}
+.ver.link {
+  cursor: pointer;
+}
+.ver.link:hover {
+  color: #409eff;
+}
+/* 关于弹层 */
+.about-pop .ap-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 4px;
+}
+.about-pop .ap-dim {
+  font-size: 12px;
+  color: #a8abb2;
+}
+.about-pop .ap-update {
+  margin: 10px 0;
+  font-size: 13px;
+  color: #606266;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.about-pop .ap-check {
+  width: 100%;
 }
 .account {
   display: flex;

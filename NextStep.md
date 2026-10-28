@@ -12,8 +12,18 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-28，V0.5 规划与上游 PR 材料就绪）
+## 当前状态（快照，2026-10-28，V0.5-A 代码完成；工作方式=代码先行、测试后置）
 
+- **工作方式调整（用户指令，2026-10-28）**：先把代码写完，测试统一攒到最后一批跑
+  （欠账清单见「下一步」第 1 项）。
+- **V0.5-A 阶段 a 自动更新代码已完成（未测）**：`src/main/updater.ts`（net.fetch 走
+  系统代理；releases/latest 优先、无正式 Release 时回退 tags 取最高语义版本；semver
+  比较）+ IPC `ob:checkUpdate`/`ob:openUrl`（仅放行 github.com 域）+ preload/api 封装 +
+  渲染层「关于」弹层（版本号可点：当前/Electron 版本/检查更新/有新版→打开下载页）+
+  App.vue 24h 节流后台检查（有新版→常驻通知点击直达）+ electron-builder
+  `publish: github`（阶段 b electron-updater 更新源预留）。**注意**：仓库尚无正式
+  GitHub Release（只有 tag），tags 回退路径是当前实际生效路径；正式发布动作
+  （--publish=always 挂安装包资产）归测试批且需用户确认。typecheck 绿（仅编译自检）。
 - **已推送远端**：main 全部提交 + v0.4.0 / v0.4.0-win-prepared / v0.4.1 / v0.4.2 四个
   tag 均在 github.com/JeckChen666/OneBrowser（本地积压清零，后续随提交即推）。
 - **V0.5 规划已出（本工作单元）**：`docs/v0.5.0-plan.md`——①自动更新两阶段
@@ -77,16 +87,23 @@
 
 ## 下一步（按优先级）
 
-1. **V0.5-A 实施（无外部依赖，计划估时 3 天）**：阶段 a 自动更新（publish:github 配置 +
-   「检查更新」入口 + Releases 直达）+ 增量快照量化决策门（三档 profile 实测）。
+1. **统一测试批（攒齐后一次跑，需本地栈：server/test-site 起 + 代理可选）**：
+   desktop e2e 17 · browser-smoke 3 · screenshot-tour 六站（顺带目检「关于」弹层与更新
+   检查）· dist:win + 打包验收 bat · server `go test ./...` 全量 · 增量快照量化门
+   （10/50/200MB 三档实测，决定 §2 立项与否）· 更新检查真实链路（releases/latest 404→
+   tags 回退）。涉及对外发布（--publish 挂 Release 资产）部分需用户确认。
 2. **V0.5-B：团队协作设计定稿**（身份密钥对/团队 DEK 信封/吊销语义 + 迁移草案与
-   时序图，写入计划文档附录，估时 2 天）。
+   时序图，写入计划文档附录；纯文档不属测试，可继续代码先行节奏推进）。
 3. **os_crypt 上游 PR 提交**：材料在 `scripts/kernel-build/upstream-pr/`，
    **需用户过目 pr-body-draft.md 后放行**（对外动作）。
 4. **代码签名证书**（需用户决策采购）：签发后随 V0.5-C 全量自动更新一起接入。
 5. **服务端生产部署演练**：需域名与对外主机；production.md 流程已备（含 ADMIN_TOKEN）。
 
 ## 已完成归档
+
+- **[2026-10-28] V0.5-A 阶段 a 自动更新代码（未测，归统一测试批）**：updater 模块 +
+  IPC/preload/渲染层三件（关于弹层/24h 后台检查/github 域白名单外链）+ publish:github
+  配置。工作方式调整为「代码先行、测试后置」。
 
 - **[2026-10-28] V0.5 规划 + os_crypt 上游 PR 材料**：`docs/v0.5.0-plan.md`（自动更新
   两阶段/增量快照量化门/团队协作 E2E 设计，含里程碑与裁剪顺序）；`scripts/kernel-build/

@@ -107,6 +107,16 @@ export interface AppInfo {
   platform: string
 }
 
+/** 版本检查结果（V0.5 阶段 a：报告 + 直达下载页，不自动安装） */
+export interface UpdateCheck {
+  current: string
+  latest: string | null
+  hasUpdate: boolean
+  releaseUrl: string | null
+  publishedAt?: string
+  notes?: string
+}
+
 export interface CreateEnvInput {
   name: string
   mode: EnvMode

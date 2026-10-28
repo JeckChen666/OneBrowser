@@ -7,11 +7,14 @@ import type {
   Hosting,
   KernelStatus,
   MainEvent,
-  ProxyConfig
+  ProxyConfig,
+  UpdateCheck
 } from '@shared/types'
 
 interface ObApi {
   appInfo(): Promise<AppInfo>
+  checkUpdate(): Promise<UpdateCheck>
+  openUrl(url: string): Promise<void>
   getState(): Promise<AppState>
   register(email: string, password: string): Promise<void>
   login(email: string, password: string): Promise<void>
