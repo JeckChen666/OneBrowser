@@ -38,9 +38,16 @@ type envItem struct {
 	ConfigEnc string     `json:"configEnc"`
 	CreatedAt time.Time  `json:"createdAt"`
 	UpdatedAt time.Time  `json:"updatedAt"`
+	TeamID    *string    `json:"teamId"`   // 团队环境归属（NULL=个人）
+	TeamName  string     `json:"teamName"` // 团队名（明文元数据）
 	Base      *baseMeta  `json:"base"`
 	Lease     *leaseMeta `json:"lease"`
 }
+
+// 可见性谓词：个人环境=本人；团队环境=active 成员（V0.6，附录 A）
+const visibleEnvPred = `((e.user_id = $1 AND e.team_id IS NULL) OR
+	 (e.team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+	   WHERE m.team_id = e.team_id AND m.user_id = $1 AND m.state='active')))`
 
 func (s *Service) List(w http.ResponseWriter, r *http.Request) {
 	id, err := auth.FromContext(r.Context())
@@ -50,12 +57,14 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.DB.Pool.Query(r.Context(), `
 		SELECT e.id, e.name, e.mode, e.config_enc, e.created_at, e.updated_at,
+		       e.team_id, COALESCE(tm.name, ''),
 		       s.id, s.created_at, s.size_bytes, s.sha256, s.device_id,
 		       l.holder_device_id, l.state
 		FROM environments e
+		LEFT JOIN teams tm ON tm.id = e.team_id
 		LEFT JOIN snapshots s ON s.id = e.latest_base_id AND s.state = 'ready'
 		LEFT JOIN leases l ON l.env_id = e.id
-		WHERE e.user_id = $1 AND e.deleted_at IS NULL
+		WHERE e.deleted_at IS NULL AND `+visibleEnvPred+`
 		ORDER BY e.updated_at DESC`, id.UserID)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
@@ -73,6 +82,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request) {
 		var holder *string
 		var leaseState *string
 		if err := rows.Scan(&it.ID, &it.Name, &it.Mode, &it.ConfigEnc, &it.CreatedAt, &it.UpdatedAt,
+			&it.TeamID, &it.TeamName,
 			&baseID, &baseAt, &baseSize, &baseSha, &baseDev, &holder, &leaseState); err != nil {
 			http.Error(w, "scan error", http.StatusInternalServerError)
 			return
@@ -95,6 +105,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 		Mode      string `json:"mode"`
 		ConfigEnc string `json:"configEnc"`
+		TeamID    string `json:"teamId"` // 团队环境归属（空=个人）
 	}
 	if !decodeBody(w, r, &req) {
 		return
@@ -107,14 +118,31 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_env", "name 必填，mode 必须为 snapshot/exclusive")
 		return
 	}
+	// 归因规则（附录 A.8）：团队环境的 user_id=团队 owner（快照配额/S3 key 一致跟随），
+	// 创建者须为 active 成员（member 亦可建=使用行为）
+	ownerID := id.UserID
+	var teamID any // nil → NULL
+	if req.TeamID != "" {
+		var owner string
+		err := s.DB.Pool.QueryRow(r.Context(), `
+			SELECT t.owner_id FROM teams t
+			JOIN team_members m ON m.team_id = t.id AND m.user_id = $1 AND m.state = 'active'
+			WHERE t.id = $2`, id.UserID, req.TeamID).Scan(&owner)
+		if err != nil {
+			writeErr(w, http.StatusForbidden, "not_member", "不是该团队成员，无法创建团队环境")
+			return
+		}
+		ownerID = owner
+		teamID = req.TeamID
+	}
 	var out envItem
 	err := s.DB.Pool.QueryRow(r.Context(), `
-		INSERT INTO environments (id, user_id, name, mode, config_enc)
-		VALUES ($1,$2,$3,$4,$5)
+		INSERT INTO environments (id, user_id, name, mode, config_enc, team_id)
+		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (id) DO UPDATE SET name=$3, mode=$4, config_enc=$5, updated_at=now()
 		WHERE environments.user_id = $2
 		RETURNING id, name, mode, config_enc, created_at, updated_at`,
-		req.ID, id.UserID, req.Name, req.Mode, req.ConfigEnc).
+		req.ID, ownerID, req.Name, req.Mode, req.ConfigEnc, teamID).
 		Scan(&out.ID, &out.Name, &out.Mode, &out.ConfigEnc, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db", "环境创建失败")
@@ -138,7 +166,10 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 		  name = COALESCE($3, name),
 		  config_enc = COALESCE($4, config_enc),
 		  updated_at = now()
-		WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
+		WHERE id=$1 AND deleted_at IS NULL AND
+		  ((user_id=$2 AND team_id IS NULL) OR
+		   (team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+		     WHERE m.team_id = environments.team_id AND m.user_id=$2 AND m.state='active')))`,
 		envID, id.UserID, req.Name, req.ConfigEnc)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeErr(w, http.StatusNotFound, "not_found", "环境不存在")
@@ -151,8 +182,12 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 func (s *Service) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
 	envID := chi.URLParam(r, "envID")
-	tag, err := s.DB.Pool.Exec(r.Context(),
-		`UPDATE environments SET deleted_at=now(), updated_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
+	tag, err := s.DB.Pool.Exec(r.Context(), `
+		UPDATE environments SET deleted_at=now(), updated_at=now()
+		WHERE id=$1 AND deleted_at IS NULL AND
+		  ((user_id=$2 AND team_id IS NULL) OR
+		   (team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+		     WHERE m.team_id = environments.team_id AND m.user_id=$2 AND m.state='active')))`,
 		envID, id.UserID)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeErr(w, http.StatusNotFound, "not_found", "环境不存在")

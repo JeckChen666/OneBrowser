@@ -3,6 +3,10 @@
     <header class="topbar">
       <div class="title">
         <h1>🌐 OneBrowser</h1>
+        <el-radio-group v-model="view" size="small">
+          <el-radio-button value="envs">环境</el-radio-button>
+          <el-radio-button value="teams">团队<el-badge v-if="pendingTeamCount" :value="pendingTeamCount" style="margin-left: 4px" /></el-radio-button>
+        </el-radio-group>
         <el-popover v-if="appVersion" placement="bottom-start" width="300" trigger="click">
           <template #reference>
             <span class="ver link">v{{ appVersion }} ⌄</span>
@@ -54,7 +58,11 @@
       </div>
     </header>
 
-    <main class="content">
+    <main v-if="view === 'teams'" class="content">
+      <TeamsPanel @changed="onTeamsChanged" />
+    </main>
+
+    <main v-else class="content">
       <div class="toolbar">
         <el-button type="primary" @click="showCreate = true">＋ 新建环境</el-button>
         <span class="stats">共 {{ state.envs.length }} 个 · 运行中 {{ runningCount }} 个</span>
@@ -114,6 +122,7 @@
               <el-tag size="small" :type="hostingTagType(row.env.hosting)" effect="plain">
                 {{ hostingText(row.env.hosting) }}
               </el-tag>
+              <el-tag v-if="row.teamName" size="small" type="danger" effect="plain">👥 {{ row.teamName }}</el-tag>
               <el-tag size="small" :type="row.env.mode === 'snapshot' ? 'success' : 'warning'">
                 {{ row.env.mode === 'snapshot' ? '模式一 · 快照' : '模式二 · 互斥' }}
               </el-tag>
@@ -183,6 +192,7 @@
           <div class="ds-title">基本信息</div>
           <div class="ds-row"><span class="ds-label">模式</span><span>{{ detailRow.env.mode === 'snapshot' ? '快照分支（关闭即弃，保存为基线固化）' : '互斥接管（关闭自动保存）' }}</span></div>
           <div class="ds-row"><span class="ds-label">承载</span><span>{{ hostingText(detailRow.env.hosting) }}</span></div>
+          <div v-if="detailRow.teamName" class="ds-row"><span class="ds-label">归属</span><span>👥 团队「{{ detailRow.teamName }}」（成员共享）</span></div>
           <div class="ds-row"><span class="ds-label">主页</span><span class="ds-mono">{{ detailRow.env.homepage || '—' }}</span></div>
         </div>
         <div v-if="detailRow.env.hosting === 'kernel'" class="detail-sec">
@@ -252,6 +262,15 @@
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="例如：我的 B 站号" @keyup.enter="create" />
+        </el-form-item>
+        <el-form-item v-if="activeTeams.length" label="归属">
+          <div class="inline-row">
+            <el-select v-model="form.teamId" style="width: 280px" placeholder="个人（仅自己可见）">
+              <el-option value="" label="个人（仅自己可见）" />
+              <el-option v-for="t in activeTeams" :key="t.id" :value="t.id" :label="`团队 · ${t.name}（成员共享）`" />
+            </el-select>
+            <span class="hint">团队环境的登录态与配置对全体成员端到端共享</span>
+          </div>
         </el-form-item>
         <el-form-item label="模式">
           <div class="radio-cards">
@@ -452,11 +471,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, reactive, ref, type Ref } from 'vue'
+import { computed, inject, onMounted, reactive, ref, type Ref } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import type { AppState, EnvMode, EnvView, Hosting, KernelStatus, ProxyConfig, UpdateCheck } from '@shared/types'
+import type { AppState, EnvMode, EnvView, Hosting, KernelStatus, ProxyConfig, TeamInfo, UpdateCheck } from '@shared/types'
 import { ob } from '../api'
 import { errMsg, fmtTimeFull, fmtTimeShort } from '../fmt'
+import TeamsPanel from './TeamsPanel.vue'
 
 const props = defineProps<{ state: AppState }>()
 const emit = defineEmits<{ refresh: [] }>()
@@ -469,6 +489,24 @@ ob.appInfo().then((i) => {
   appVersion.value = i.version
   electronVersion.value = i.electron
 }).catch(() => undefined)
+
+// 视图切换（环境 / 团队，V0.6）
+const view = ref<'envs' | 'teams'>('envs')
+const teams = ref<TeamInfo[]>([])
+const pendingTeamCount = computed(() => teams.value.filter((t) => t.state === 'pending').length)
+const activeTeams = computed(() => teams.value.filter((t) => t.state === 'active'))
+async function loadTeams(): Promise<void> {
+  try {
+    teams.value = await ob.teams()
+  } catch {
+    /* 未登录等场景静默 */
+  }
+}
+function onTeamsChanged(): void {
+  loadTeams()
+  refresh()
+}
+onMounted(loadTeams)
 
 // 关于弹层的「检查更新」（V0.5 阶段 a：报告 + 直达 Releases，不自动安装）
 const checking = ref(false)
@@ -507,6 +545,7 @@ const form = reactive<{
   hosting: Hosting
   homepage: string
   seed: string
+  teamId: string
   fpPlatform: string
   fpTzMode: 'seed' | 'auto' | 'manual'
   fpTimezone: string
@@ -518,6 +557,7 @@ const form = reactive<{
   hosting: 'kernel',
   homepage: 'http://127.0.0.1:18080',
   seed: '',
+  teamId: '',
   fpPlatform: 'Windows',
   fpTzMode: 'seed',
   fpTimezone: '',
@@ -632,6 +672,7 @@ async function create(): Promise<void> {
       mode: form.mode,
       hosting: form.hosting,
       homepage: form.homepage,
+      ...(form.teamId ? { teamId: form.teamId } : {}),
       proxy: p,
       ...(form.hosting === 'kernel' && form.seed.trim() ? { seed: form.seed.trim() } : {}),
       fingerprint: form.hosting === 'kernel'
@@ -646,6 +687,7 @@ async function create(): Promise<void> {
     })
     showCreate.value = false
     form.name = ''
+    form.teamId = ''
     form.seed = '' // 防止连续创建误用同一种子（= 同一指纹身份）
   })
   creating.value = false

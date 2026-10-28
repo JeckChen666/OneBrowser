@@ -12,15 +12,23 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-28，V0.5-A 代码 + V0.5-B 设计定稿完成；测试后置）
+## 当前状态（快照，2026-10-28，V0.6 团队协作代码完成；测试后置、只本地提交）
 
-- **V0.5-B 团队协作设计已定稿（本工作单元）**：`docs/v0.5.0-plan.md` 附录 A——
-  密钥对象（X25519 身份对 + team DEK 成员信封）/ 迁移草案 SQL（0002_teams，个人路径
-  零改动）/ 换根不换管线（resolveRootKey 唯一接入点，快照与 os-crypt 管线零改动）/
-  push 模型邀请时序 / 软吊销默认+DEK 轮换可选加固 / 端点与 ws 消息清单 / V0.6 实现
-  清单 / 四个开放问题决议（配额计 owner、租约显 email、不做硬吊销、三级角色）。
-- **工作方式调整（用户指令，2026-10-28）**：先把代码写完，测试统一攒到最后一批跑
-  （欠账清单见「下一步」第 1 项）。
+- **V0.6 团队协作实现代码已完成（本工作单元，未测，归统一测试批）**：按附录 A 蓝本全量落地——
+  **服务端**：0002_teams 迁移（users 身份对两列 + teams/team_members + environments.team_id）；
+  teams 包（建团/列表/公钥查询/邀请 push 模型/成员/吊销/DEK 轮换全覆盖校验/接受拒绝）；
+  auth 身份密钥对（注册可选字段 + 登录返回 + /v1/auth/identity 空态一次性回填）；
+  envs 团队可见性谓词 + 创建归属（user_id 归因团队 owner）；snapshots envAccess/snapAccess
+  统一谓词 + 全管线 owner 归因（S3 key/配额/prune）；leases 团队谓词 + pending 附 holderEmail；
+  ws 新增 team.updated；router 团队扇出广播（env.updated 团队环境广播全体成员）。
+  **客户端**：e2e.ts 新增 X25519 身份对 + wrapFor/unwrapWith（ECDH→HKDF→AES-GCM，eph 公钥
+  兼 HKDF salt）；注册生成身份对、旧账号登录回填；refreshTeams + teamDeks 缓存 +
+  **rootKeyFor 换根**（配置/快照 L1L2/os-crypt 全管线，snapshotEngine 零改动）；团队九个
+  IPC 通道；UI：TeamsPanel（待接受邀请/建团/成员管理/邀请/吊销/轮换）+ 顶栏 环境/团队 视图
+  切换（待接受角标）+ 新建环境归属选择 + 行内团队标签 + 详情抽屉归属行。
+  **编译自检**：desktop typecheck 绿 + server build/vet 绿。**未跑任何测试**（统一测试批）。
+- **工作方式（用户指令）**：①代码先行、测试统一后置；②**不主动推送远端**（push 弹登录打扰，
+  仅用户明确要求时执行；待推提交本地攒着）。
 - **V0.5-A 阶段 a 自动更新代码已完成（未测）**：`src/main/updater.ts`（net.fetch 走
   系统代理；releases/latest 优先、无正式 Release 时回退 tags 取最高语义版本；semver
   比较）+ IPC `ob:checkUpdate`/`ob:openUrl`（仅放行 github.com 域）+ preload/api 封装 +
@@ -95,19 +103,22 @@
 
 ## 下一步（按优先级）
 
-1. **统一测试批（攒齐后一次跑，需本地栈：server/test-site 起）**：
-   desktop e2e 17 · browser-smoke 3 · screenshot-tour 六站（顺带目检「关于」弹层与更新
-   检查）· dist:win + 打包验收 bat · server `go test ./...` 全量 · 增量快照量化门
-   （10/50/200MB 三档实测，决定 §2 立项与否）· 更新检查真实链路（releases/latest 404→
-   tags 回退）。涉及对外发布（--publish 挂 Release 资产）部分需用户确认。
-2. **V0.6 团队协作实现启动**（蓝本=附录 A；纯代码可先行，测试并入下一批）：服务端
-   0002 迁移 + teams 端点 → 客户端 e2e 原语与身份密钥对 → resolveRootKey 接入 → UI。
-3. **os_crypt 上游 PR 提交**：材料在 `scripts/kernel-build/upstream-pr/`，
+1. **统一测试批（攒齐后一次跑；含 V0.5-A 与 V0.6 全部欠账）**：
+   ①V0.6 服务端 Go 测试（teams 鉴权流/邀请吊销轮换/环境可见性/快照 owner 归因/0002 迁移）
+   ②V0.6 桌面 e2e：A 邀 B → B 免登录开团队环境基线；A 吊 C → C 拉新基线 403；S3 密文抽查
+   ③desktop e2e 17 · browser-smoke 3 · screenshot-tour（加团队页站点）④dist:win 打包验收
+   ⑤server 全量回归 ⑥增量快照量化门（10/50/200MB）⑦更新检查真实链路（含 tags 回退）。
+   涉及对外发布（--publish 挂 Release 资产）需用户确认。
+2. **os_crypt 上游 PR 提交**：材料在 `scripts/kernel-build/upstream-pr/`，
    **需用户过目 pr-body-draft.md 后放行**（对外动作）。
-4. **代码签名证书**（需用户决策采购）：签发后随 V0.5-C 全量自动更新一起接入。
-5. **服务端生产部署演练**：需域名与对外主机；production.md 流程已备（含 ADMIN_TOKEN）。
+3. **代码签名证书**（需用户决策采购）：签发后随 V0.5-C 全量自动更新一起接入。
+4. **服务端生产部署演练**：需域名与对外主机；production.md 流程已备（含 ADMIN_TOKEN）。
 
 ## 已完成归档
+
+- **[2026-10-28] V0.6 团队协作实现（代码完成，未测）**：服务端（迁移+teams 包+auth 身份对+
+  envs/snapshots/leases 团队化+扇出广播）与客户端（X25519 原语+身份对管理+rootKeyFor 换根
+  全管线+九 IPC+TeamsPanel UI）按附录 A 蓝本全量落地；typecheck/build/vet 三绿。
 
 - **[2026-10-28] V0.5-B 团队协作设计定稿**：v0.5.0-plan.md 附录 A 八节全（密钥/迁移/
   派生/邀请与吊销时序/端点/实现清单/安全性质与开放问题决议）。V0.5 最小交付 A+B 完成。

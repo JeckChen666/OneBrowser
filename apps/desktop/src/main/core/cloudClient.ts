@@ -1,6 +1,6 @@
 // 云端客户端：REST + WebSocket（信令）。纯传输层，不含业务状态。
 import WebSocket from 'ws'
-import type { CloudEnvRow, EnvMode } from '@shared/types'
+import type { CloudEnvRow, EnvMode, TeamInfo, TeamMember } from '@shared/types'
 
 export interface WsInMsg {
   type: 'lease.acquire' | 'lease.release' | 'lease.heartbeat' | 'lease.cancel'
@@ -14,7 +14,9 @@ export interface WsOutMsg {
   snapshotId?: string
   stale?: boolean
   holderDeviceId?: string
+  holderEmail?: string
   deadlineMs?: number
+  teamId?: string
   code?: string
   message?: string
 }
@@ -76,6 +78,8 @@ export class CloudClient {
     authKdf: AuthKdfResp['authKdf']
     wrappedDek: string
     kekKdf: AuthKdfResp['authKdf']
+    identityPub?: string
+    wrappedIdentityPriv?: string
   }): Promise<{ userId: string }> {
     return this.req('POST', '/v1/auth/register', body)
   }
@@ -94,6 +98,8 @@ export class CloudClient {
     email: string
     wrappedDek: string
     kekKdf: AuthKdfResp['authKdf']
+    identityPub: string
+    wrappedIdentityPriv: string
   }> {
     return this.req('POST', '/v1/auth/login', body)
   }
@@ -102,12 +108,54 @@ export class CloudClient {
     return this.req('POST', '/v1/auth/logout', {})
   }
 
+  /** 身份密钥对回填（旧账号一次性写入；服务端只允许空态覆盖） */
+  setIdentity(body: { identityPub: string; wrappedIdentityPriv: string }): Promise<{ ok: boolean }> {
+    return this.req('POST', '/v1/auth/identity', body)
+  }
+
+  // --- teams（V0.6）---
+  listTeams(): Promise<{ teams: TeamInfo[] }> {
+    return this.req('GET', '/v1/teams')
+  }
+
+  createTeam(body: { name: string; wrappedSelfDek: string }): Promise<{ teamId: string }> {
+    return this.req('POST', '/v1/teams', body)
+  }
+
+  lookupUser(email: string): Promise<{ userId: string; identityPub: string }> {
+    return this.req('GET', `/v1/users?email=${encodeURIComponent(email)}`)
+  }
+
+  addTeamMember(teamId: string, body: { userId: string; wrappedTeamDek: string; role?: string }): Promise<{ ok: boolean }> {
+    return this.req('POST', `/v1/teams/${teamId}/members`, body)
+  }
+
+  listTeamMembers(teamId: string): Promise<{ members: TeamMember[] }> {
+    return this.req('GET', `/v1/teams/${teamId}/members`)
+  }
+
+  revokeTeamMember(teamId: string, userId: string): Promise<{ ok: boolean }> {
+    return this.req('POST', `/v1/teams/${teamId}/members/${userId}/revoke`, {})
+  }
+
+  rotateTeamDek(teamId: string, items: Array<{ userId: string; wrappedTeamDek: string }>): Promise<{ ok: boolean }> {
+    return this.req('PUT', `/v1/teams/${teamId}/dek`, { items })
+  }
+
+  acceptInvite(teamId: string): Promise<{ ok: boolean }> {
+    return this.req('POST', `/v1/invites/${teamId}/accept`, {})
+  }
+
+  declineInvite(teamId: string): Promise<{ ok: boolean }> {
+    return this.req('POST', `/v1/invites/${teamId}/decline`, {})
+  }
+
   // --- envs ---
   listEnvs(): Promise<{ envs: CloudEnvRow[] }> {
     return this.req('GET', '/v1/envs')
   }
 
-  createEnv(body: { id: string; name: string; mode: EnvMode; configEnc: string }): Promise<CloudEnvRow> {
+  createEnv(body: { id: string; name: string; mode: EnvMode; configEnc: string; teamId?: string }): Promise<CloudEnvRow> {
     return this.req('POST', '/v1/envs', body)
   }
 

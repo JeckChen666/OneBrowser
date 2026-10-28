@@ -13,9 +13,11 @@ type OutMsg struct {
 	Type           string `json:"type"`
 	EnvID          string `json:"envId,omitempty"`
 	SnapshotID     string `json:"snapshotId,omitempty"`     // granted：待下载快照
-	Stale          bool   `json:"stale,omitempty"`          // granted：是否为失联兜底的旧基线
+	Stale          bool    `json:"stale,omitempty"`          // granted：是否为失联兜底的旧基线
 	HolderDeviceID string `json:"holderDeviceId,omitempty"` // pending：当前持有者
+	HolderEmail    string `json:"holderEmail,omitempty"`    // pending（团队环境）：持有成员邮箱
 	DeadlineMS     int64  `json:"deadlineMs,omitempty"`     // pending/evict：宽限毫秒
+	TeamID         string `json:"teamId,omitempty"`         // team.updated：变更的团队
 	Code           string `json:"code,omitempty"`
 	Message        string `json:"message,omitempty"`
 }
@@ -33,5 +35,6 @@ const (
 	TypeLost      = "lease.lost"
 	TypeCancelled = "lease.cancelled"
 	TypeEnvUpdate = "env.updated"
+	TypeTeamUpdate = "team.updated" // 团队成员/DEK 变更 → 成员端刷新团队与团队环境
 	TypeError     = "error"
 )

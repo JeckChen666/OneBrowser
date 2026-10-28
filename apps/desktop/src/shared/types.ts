@@ -35,6 +35,8 @@ export interface EnvConfig {
   proxy?: ProxyConfig
   fingerprint?: FingerprintConfig
   kernelVersion?: string
+  /** 团队归属（V0.6）：存在时配置以 team DEK 密封（与个人 DEK 派生式同构） */
+  teamId?: string
   /** 会话健康检查（可选）：打开快照环境恢复登录态后，按此探测基线是否仍有效；
    * 响应体不含 loggedInMarker 时提示「基线失效，请重新登录并更新基线」 */
   sessionCheck?: { urlPath: string; loggedInMarker: string }
@@ -65,8 +67,31 @@ export interface CloudEnvRow {
   configEnc: string
   createdAt: string
   updatedAt: string
+  teamId?: string | null // 团队环境归属（null/缺省=个人）
+  teamName?: string
   base: BaseMeta | null
   lease: LeaseMeta | null
+}
+
+/** 团队（V0.6）：元数据明文；wrappedTeamDek 为本成员的 team DEK 信封（密文） */
+export interface TeamInfo {
+  id: string
+  name: string
+  ownerEmail: string
+  role: 'owner' | 'admin' | 'member'
+  state: 'pending' | 'active'
+  wrappedTeamDek: string
+  memberCount: number
+  createdAt: string
+}
+
+export interface TeamMember {
+  userId: string
+  email: string
+  role: 'owner' | 'admin' | 'member'
+  state: 'pending' | 'active'
+  identityPub: string // owner 轮换 DEK 时需为每个成员重新包裹
+  joinedAt: string
 }
 
 export type EnvPhase =
@@ -87,6 +112,7 @@ export interface EnvView {
   hasBase: boolean
   baseCreatedAt?: string
   leaseHolder?: string
+  teamName?: string // 团队环境名（个人环境为空）
 }
 
 export interface AccountInfo {
@@ -126,6 +152,7 @@ export interface CreateEnvInput {
   fingerprint?: FingerprintConfig
   sessionCheck?: { urlPath: string; loggedInMarker: string }
   seed?: string // 测试用：指定种子（缺省随机）
+  teamId?: string // 团队归属（V0.6，缺省=个人）
 }
 
 export interface KernelStatus {

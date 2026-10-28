@@ -60,6 +60,16 @@ function registerIPC(): void {
   }
   handle('ob:getState', () => svc.getState())
   handle('ob:sync', () => svc.refreshEnvs())
+  // 团队（V0.6）
+  handle('ob:teams', () => svc.getTeams())
+  handle('ob:teams:refresh', () => svc.refreshTeams())
+  handle('ob:teams:create', (name: string) => svc.createTeam(name))
+  handle('ob:teams:invite', (teamId: string, email: string, role?: 'admin' | 'member') => svc.inviteMember(teamId, email, role))
+  handle('ob:teams:members', (teamId: string) => svc.listTeamMembers(teamId))
+  handle('ob:teams:revoke', (teamId: string, userId: string) => svc.revokeMember(teamId, userId))
+  handle('ob:teams:rotate', (teamId: string) => svc.rotateTeamDek(teamId))
+  handle('ob:teams:accept', (teamId: string) => svc.acceptInvite(teamId))
+  handle('ob:teams:decline', (teamId: string) => svc.declineInvite(teamId))
   handle('ob:register', (email: string, password: string) => svc.register(email, password))
   handle('ob:login', (email: string, password: string) => svc.login(email, password))
   handle('ob:logout', () => svc.logout())

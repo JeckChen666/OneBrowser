@@ -68,6 +68,9 @@ type registerReq struct {
 	AuthKdf    KdfParams `json:"authKdf"`
 	WrappedDek string    `json:"wrappedDek"`
 	KekKdf     KdfParams `json:"kekKdf"`
+	// 身份密钥对（V0.6 团队协作）：可选（旧客户端兼容）；新客户端注册时生成
+	IdentityPub         string `json:"identityPub"`
+	WrappedIdentityPriv string `json:"wrappedIdentityPriv"`
 }
 
 type loginReq struct {
@@ -86,6 +89,9 @@ type loginResp struct {
 	Email      string    `json:"email"`
 	WrappedDek string    `json:"wrappedDek"`
 	KekKdf     KdfParams `json:"kekKdf"`
+	// 身份密钥对（V0.6 团队协作）：旧账号未生成时为空串，客户端登录后走 /v1/auth/identity 回填
+	IdentityPub         string `json:"identityPub"`
+	WrappedIdentityPriv string `json:"wrappedIdentityPriv"`
 }
 
 // --- 处理器 ---
@@ -135,9 +141,10 @@ func (s *Service) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	kekKdf, _ := json.Marshal(req.KekKdf)
 	userID := store.NewUUID()
 	_, err = s.DB.Pool.Exec(r.Context(),
-		`INSERT INTO users (id, email, verifier, auth_kdf, wrapped_dek, kek_kdf)
-		 VALUES ($1,$2,$3,$4,$5,$6)`,
-		userID, req.Email, verifier, string(authKdf), req.WrappedDek, string(kekKdf))
+		`INSERT INTO users (id, email, verifier, auth_kdf, wrapped_dek, kek_kdf, identity_pub, wrapped_identity_priv)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		userID, req.Email, verifier, string(authKdf), req.WrappedDek, string(kekKdf),
+		req.IdentityPub, req.WrappedIdentityPriv)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") {
 			writeErr(w, http.StatusConflict, "email_taken", "该邮箱已注册")
@@ -158,9 +165,10 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
 	var userID, verifier, wrapped, kek string
+	var identityPub, wrappedIdentityPriv string
 	err := s.DB.Pool.QueryRow(r.Context(),
-		`SELECT id, verifier, wrapped_dek, kek_kdf FROM users WHERE email=$1`, req.Email).
-		Scan(&userID, &verifier, &wrapped, &kek)
+		`SELECT id, verifier, wrapped_dek, kek_kdf, identity_pub, wrapped_identity_priv FROM users WHERE email=$1`, req.Email).
+		Scan(&userID, &verifier, &wrapped, &kek, &identityPub, &wrappedIdentityPriv)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "bad_credentials", "邮箱或密码错误")
 		return
@@ -197,7 +205,36 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, loginResp{
 		Token: token, ExpiresAt: expires, DeviceID: req.DeviceID,
 		UserID: userID, Email: req.Email, WrappedDek: wrapped, KekKdf: kekKdf,
+		IdentityPub: identityPub, WrappedIdentityPriv: wrappedIdentityPriv,
 	})
+}
+
+// HandleSetIdentity 身份密钥对回填（V0.6）：旧账号首次用新客户端登录时补生成。
+// 仅允许从空态一次性写入——已有关钥不可覆盖（防劫持他人包裹语义）。
+func (s *Service) HandleSetIdentity(w http.ResponseWriter, r *http.Request) {
+	id, err := FromContext(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthenticated", "未登录")
+		return
+	}
+	var req struct {
+		IdentityPub         string `json:"identityPub"`
+		WrappedIdentityPriv string `json:"wrappedIdentityPriv"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IdentityPub == "" || req.WrappedIdentityPriv == "" {
+		writeErr(w, http.StatusBadRequest, "invalid_args", "identityPub/wrappedIdentityPriv 必填")
+		return
+	}
+	tag, err := s.DB.Pool.Exec(r.Context(),
+		`UPDATE users SET identity_pub=$3, wrapped_identity_priv=$4
+		 WHERE id=$1 AND identity_pub='' AND wrapped_identity_priv=''`,
+		id.UserID, "", req.IdentityPub, req.WrappedIdentityPriv)
+	if err != nil || tag.RowsAffected() == 0 {
+		writeErr(w, http.StatusConflict, "already_set", "身份密钥已存在，不可覆盖")
+		return
+	}
+	s.audit(r.Context(), id.UserID, id.DeviceID, "user.set_identity", "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Service) HandleLogout(w http.ResponseWriter, r *http.Request) {

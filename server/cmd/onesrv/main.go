@@ -22,6 +22,7 @@ import (
 	"onebrowser/server/internal/leases"
 	"onebrowser/server/internal/s3s3"
 	"onebrowser/server/internal/snapshots"
+	"onebrowser/server/internal/teams"
 	"onebrowser/server/internal/store"
 	"onebrowser/server/internal/ws"
 )
@@ -51,11 +52,12 @@ func main() {
 	envSvc := &envs.Service{DB: db}
 	snapSvc := &snapshots.Service{DB: db, S3: s3c, Cfg: cfg}
 	leaseSvc := leases.New(db, cfg)
+	teamSvc := &teams.Service{DB: db} // Notify 由 router 注入（team.updated 广播）
 	hub := ws.NewHub(authSvc)
 	leaseSvc.SetNotifier(hub)
 
 	router := api.NewRouter(api.Deps{
-		DB: db, S3: s3c, Auth: authSvc, Envs: envSvc, Snaps: snapSvc, Leases: leaseSvc, Hub: hub, Cfg: cfg,
+		DB: db, S3: s3c, Auth: authSvc, Envs: envSvc, Snaps: snapSvc, Leases: leaseSvc, Teams: teamSvc, Hub: hub, Cfg: cfg,
 	})
 
 	go leaseSvc.RunSweeper(ctx)

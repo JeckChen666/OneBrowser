@@ -8,6 +8,8 @@ import type {
   KernelStatus,
   MainEvent,
   ProxyConfig,
+  TeamInfo,
+  TeamMember,
   UpdateCheck
 } from '@shared/types'
 
@@ -45,6 +47,17 @@ const api = {
     }
   ): Promise<void> => invoke('ob:updateEnv', id, patch),
   sync: (): Promise<void> => invoke('ob:sync'),
+  // 团队（V0.6）
+  teams: (): Promise<TeamInfo[]> => invoke('ob:teams'),
+  teamsRefresh: (): Promise<void> => invoke('ob:teams:refresh'),
+  teamCreate: (name: string): Promise<void> => invoke('ob:teams:create', name),
+  teamInvite: (teamId: string, email: string, role?: 'admin' | 'member'): Promise<void> =>
+    invoke('ob:teams:invite', teamId, email, role),
+  teamMembers: (teamId: string): Promise<TeamMember[]> => invoke('ob:teams:members', teamId),
+  teamRevoke: (teamId: string, userId: string): Promise<void> => invoke('ob:teams:revoke', teamId, userId),
+  teamRotate: (teamId: string): Promise<void> => invoke('ob:teams:rotate', teamId),
+  teamAccept: (teamId: string): Promise<void> => invoke('ob:teams:accept', teamId),
+  teamDecline: (teamId: string): Promise<void> => invoke('ob:teams:decline', teamId),
   deleteEnv: (id: string): Promise<void> => invoke('ob:deleteEnv', id),
   openEnv: (id: string): Promise<void> => invoke('ob:openEnv', id),
   closeEnv: (id: string): Promise<void> => invoke('ob:closeEnv', id),

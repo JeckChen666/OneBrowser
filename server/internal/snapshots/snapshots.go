@@ -29,6 +29,33 @@ type uploadResp struct {
 	Upload     map[string]string `json:"upload"` // manifestUrl / blobUrl（presigned PUT）
 }
 
+// envAccess 解析调用者对环境的访问权与归因 owner（V0.6 团队化）：
+// 个人环境=本人；团队环境=active 成员。owner 是快照 user_id/S3 key/配额的归因主体
+// （团队环境=团队 owner，附录 A.8 决议）。
+func (s *Service) envAccess(r *http.Request, envID, callerID string) (ownerID string, ok bool) {
+	err := s.DB.Pool.QueryRow(r.Context(), `
+		SELECT user_id FROM environments
+		WHERE id=$1 AND deleted_at IS NULL AND
+		  ((user_id=$2 AND team_id IS NULL) OR
+		   (team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+		     WHERE m.team_id = environments.team_id AND m.user_id=$2 AND m.state='active')))`,
+		envID, callerID).Scan(&ownerID)
+	return ownerID, err == nil
+}
+
+// snapAccess 快照级访问权（commit/download）：经环境谓词校验，返回快照归因 owner。
+func (s *Service) snapAccess(r *http.Request, envID, snapID, callerID string) (ownerID string, ok bool) {
+	err := s.DB.Pool.QueryRow(r.Context(), `
+		SELECT sn.user_id FROM snapshots sn
+		JOIN environments e ON e.id = sn.env_id
+		WHERE sn.id=$1 AND sn.env_id=$2 AND e.deleted_at IS NULL AND
+		  ((e.user_id=$3 AND e.team_id IS NULL) OR
+		   (e.team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+		     WHERE m.team_id = e.team_id AND m.user_id=$3 AND m.state='active')))`,
+		snapID, envID, callerID).Scan(&ownerID)
+	return ownerID, err == nil
+}
+
 // 申请上传：创建 uploading 快照并返回预签名 PUT。
 func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
@@ -40,20 +67,23 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 
 	var envMode string
 	var baseID *string
-	err := s.DB.Pool.QueryRow(r.Context(),
-		`SELECT mode, latest_base_id FROM environments WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
-		envID, id.UserID).Scan(&envMode, &baseID)
-	if err != nil {
+	ownerID, ok := s.envAccess(r, envID, id.UserID)
+	if ok {
+		err := s.DB.Pool.QueryRow(r.Context(),
+			`SELECT mode, latest_base_id FROM environments WHERE id=$1`, envID).Scan(&envMode, &baseID)
+		ok = err == nil
+	}
+	if !ok {
 		writeErr(w, http.StatusNotFound, "env_not_found", "环境不存在")
 		return
 	}
 
-	// 用户存储配额（USER_QUOTA_GB，0=不限）：按已 ready 快照累计字节数
+	// 用户存储配额（USER_QUOTA_GB，0=不限）：按归因 owner 的已 ready 快照累计
 	if s.Cfg.UserQuotaBytes > 0 {
 		var used int64
 		if err := s.DB.Pool.QueryRow(r.Context(),
 			`SELECT COALESCE(SUM(size_bytes),0) FROM snapshots WHERE user_id=$1 AND state='ready'`,
-			id.UserID).Scan(&used); err == nil && used >= s.Cfg.UserQuotaBytes {
+			ownerID).Scan(&used); err == nil && used >= s.Cfg.UserQuotaBytes {
 			writeErr(w, http.StatusInsufficientStorage, "quota_exceeded",
 				"存储配额已用尽：请删除不再使用的环境，或联系管理员扩容")
 			return
@@ -64,12 +94,12 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.DB.Pool.Exec(r.Context(),
 		`INSERT INTO snapshots (id, env_id, user_id, device_id, based_on, state)
 		 VALUES ($1,$2,$3,$4,$5,'uploading')`,
-		snapID, envID, id.UserID, req.DeviceID, derefStr(baseID)); err != nil {
+		snapID, envID, ownerID, req.DeviceID, derefStr(baseID)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db", "快照创建失败")
 		return
 	}
 
-	mk, bk := s3s3.Keys(id.UserID, envID, snapID)
+	mk, bk := s3s3.Keys(ownerID, envID, snapID)
 	manifestURL, err1 := s.S3.PresignPut(r.Context(), mk, s.Cfg.PresignPutTTL)
 	blobURL, err2 := s.S3.PresignPut(r.Context(), bk, s.Cfg.PresignPutTTL)
 	if err1 != nil || err2 != nil {
@@ -94,16 +124,14 @@ func (s *Service) Commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var owner string
-	err := s.DB.Pool.QueryRow(r.Context(),
-		`SELECT user_id FROM snapshots WHERE id=$1 AND env_id=$2`, snapID, envID).Scan(&owner)
-	if err != nil || owner != id.UserID {
+	owner, ok := s.snapAccess(r, envID, snapID, id.UserID)
+	if !ok {
 		writeErr(w, http.StatusNotFound, "snap_not_found", "快照不存在")
 		return
 	}
 
 	if s.Cfg.S3StrictHead {
-		mk, bk := s3s3.Keys(id.UserID, envID, snapID)
+		mk, bk := s3s3.Keys(owner, envID, snapID)
 		if _, ok := s.S3.Head(r.Context(), mk); !ok {
 			writeErr(w, http.StatusBadRequest, "manifest_missing", "manifest.json 未上传")
 			return
@@ -137,7 +165,7 @@ func (s *Service) Commit(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		s.pruneEnv(pctx, id.UserID, envID, snapID)
+		s.pruneEnv(pctx, owner, envID, snapID)
 	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "promotedToBase": true})
 }
@@ -296,10 +324,14 @@ func (s *Service) GetBase(w http.ResponseWriter, r *http.Request) {
 	envID := chi.URLParam(r, "envID")
 
 	var latest *string
-	err := s.DB.Pool.QueryRow(r.Context(),
-		`SELECT latest_base_id FROM environments WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
-		envID, id.UserID).Scan(&latest)
-	if err != nil {
+	ownerID, ok := s.envAccess(r, envID, id.UserID)
+	if ok {
+		var err error
+		err = s.DB.Pool.QueryRow(r.Context(),
+			`SELECT latest_base_id FROM environments WHERE id=$1`, envID).Scan(&latest)
+		ok = err == nil
+	}
+	if !ok {
 		writeErr(w, http.StatusNotFound, "env_not_found", "环境不存在")
 		return
 	}
@@ -309,7 +341,7 @@ func (s *Service) GetBase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var meta baseMeta
-	err = s.DB.Pool.QueryRow(r.Context(), `
+	err := s.DB.Pool.QueryRow(r.Context(), `
 		SELECT id, created_at, size_bytes, sha256, device_id FROM snapshots
 		WHERE id=$1 AND env_id=$2 AND state='ready'`, *latest, envID).
 		Scan(&meta.SnapshotID, &meta.CreatedAt, &meta.SizeBytes, &meta.SHA256, &meta.DeviceID)
@@ -317,7 +349,7 @@ func (s *Service) GetBase(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, baseResp{HasBase: false})
 		return
 	}
-	mk, bk := s3s3.Keys(id.UserID, envID, meta.SnapshotID)
+	mk, bk := s3s3.Keys(ownerID, envID, meta.SnapshotID)
 	manifestURL, err1 := s.S3.PresignGet(r.Context(), mk, s.Cfg.PresignGetTTL)
 	blobURL, err2 := s.S3.PresignGet(r.Context(), bk, s.Cfg.PresignGetTTL)
 	if err1 != nil || err2 != nil {
@@ -364,15 +396,20 @@ func (s *Service) GetDownload(w http.ResponseWriter, r *http.Request) {
 	snapID := chi.URLParam(r, "snapID")
 
 	var meta baseMeta
+	ownerID, ok := s.snapAccess(r, envID, snapID, id.UserID)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "snap_not_found", "快照不存在")
+		return
+	}
 	err := s.DB.Pool.QueryRow(r.Context(), `
 		SELECT id, created_at, size_bytes, sha256, device_id FROM snapshots
-		WHERE id=$1 AND env_id=$2 AND user_id=$3 AND state='ready'`, snapID, envID, id.UserID).
+		WHERE id=$1 AND env_id=$2 AND state='ready'`, snapID, envID).
 		Scan(&meta.SnapshotID, &meta.CreatedAt, &meta.SizeBytes, &meta.SHA256, &meta.DeviceID)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "snap_not_found", "快照不存在")
 		return
 	}
-	mk, bk := s3s3.Keys(id.UserID, envID, snapID)
+	mk, bk := s3s3.Keys(ownerID, envID, snapID)
 	manifestURL, err1 := s.S3.PresignGet(r.Context(), mk, s.Cfg.PresignGetTTL)
 	blobURL, err2 := s.S3.PresignGet(r.Context(), bk, s.Cfg.PresignGetTTL)
 	if err1 != nil || err2 != nil {

@@ -8,6 +8,8 @@ import type {
   KernelStatus,
   MainEvent,
   ProxyConfig,
+  TeamInfo,
+  TeamMember,
   UpdateCheck
 } from '@shared/types'
 
@@ -33,6 +35,16 @@ interface ObApi {
     }
   ): Promise<void>
   sync(): Promise<void>
+  // 团队（V0.6）
+  teams(): Promise<TeamInfo[]>
+  teamsRefresh(): Promise<void>
+  teamCreate(name: string): Promise<void>
+  teamInvite(teamId: string, email: string, role?: 'admin' | 'member'): Promise<void>
+  teamMembers(teamId: string): Promise<TeamMember[]>
+  teamRevoke(teamId: string, userId: string): Promise<void>
+  teamRotate(teamId: string): Promise<void>
+  teamAccept(teamId: string): Promise<void>
+  teamDecline(teamId: string): Promise<void>
   deleteEnv(id: string): Promise<void>
   openEnv(id: string): Promise<void>
   closeEnv(id: string): Promise<void>

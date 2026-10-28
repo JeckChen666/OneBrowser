@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"onebrowser/server/internal/s3s3"
 	"onebrowser/server/internal/snapshots"
 	"onebrowser/server/internal/store"
+	"onebrowser/server/internal/teams"
 	"onebrowser/server/internal/ws"
 )
 
@@ -29,6 +31,7 @@ type Deps struct {
 	Envs   *envs.Service
 	Snaps  *snapshots.Service
 	Leases *leases.Service
+	Teams  *teams.Service
 	Hub    *ws.Hub
 	Cfg    config.Config
 }
@@ -36,10 +39,61 @@ type Deps struct {
 func NewRouter(d Deps) http.Handler {
 	// 模式二信令处理与 env.updated 广播回调
 	d.Hub.SetLeaseHandler(d.Leases.HandleClientMsg)
+
+	// env.updated 团队扇出：团队环境变更广播给全部 active 成员（个人环境只通知本人）
+	envTeamMembers := func(envID string) []string {
+		var teamID *string
+		if err := d.DB.Pool.QueryRow(context.Background(),
+			`SELECT team_id FROM environments WHERE id=$1`, envID).Scan(&teamID); err != nil || teamID == nil {
+			return nil
+		}
+		rows, err := d.DB.Pool.Query(context.Background(),
+			`SELECT user_id FROM team_members WHERE team_id=$1 AND state='active'`, *teamID)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	}
 	d.Envs.Notify = func(userID, envID string) {
-		d.Hub.BroadcastUser(userID, ws.OutMsg{Type: ws.TypeEnvUpdate, EnvID: envID})
+		msg := ws.OutMsg{Type: ws.TypeEnvUpdate, EnvID: envID}
+		if members := envTeamMembers(envID); members != nil {
+			for _, uid := range members {
+				d.Hub.BroadcastUser(uid, msg)
+			}
+		} else {
+			d.Hub.BroadcastUser(userID, msg)
+		}
 	}
 	d.Snaps.Notify = d.Envs.Notify
+
+	// team.updated：成员/DEK 变更 → 团队全体 active 成员刷新
+	d.Teams.Notify = func(teamID string) {
+		rows, err := d.DB.Pool.Query(context.Background(),
+			`SELECT user_id FROM team_members WHERE team_id=$1 AND state='active'`, teamID)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				ids = append(ids, id)
+			}
+		}
+		msg := ws.OutMsg{Type: ws.TypeTeamUpdate, TeamID: teamID}
+		for _, uid := range ids {
+			d.Hub.BroadcastUser(uid, msg)
+		}
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -100,6 +154,20 @@ func NewRouter(d Deps) http.Handler {
 		r.Post("/v1/envs/{envID}/snapshots/{snapID}/commit", d.Snaps.Commit)
 		r.Get("/v1/envs/{envID}/snapshots/{snapID}/download", d.Snaps.GetDownload)
 		r.Get("/v1/envs/{envID}/base", d.Snaps.GetBase)
+
+		// 身份密钥对回填（V0.6，旧账号一次性写入）
+		r.Post("/v1/auth/identity", d.Auth.HandleSetIdentity)
+
+		// 团队协作（V0.6，附录 A；服务端全程只见公钥与密文）
+		r.Post("/v1/teams", d.Teams.Create)
+		r.Get("/v1/teams", d.Teams.List)
+		r.Get("/v1/users", d.Teams.LookupUser)
+		r.Post("/v1/teams/{teamID}/members", d.Teams.AddMember)
+		r.Get("/v1/teams/{teamID}/members", d.Teams.ListMembers)
+		r.Post("/v1/teams/{teamID}/members/{userID}/revoke", d.Teams.Revoke)
+		r.Put("/v1/teams/{teamID}/dek", d.Teams.RotateDek)
+		r.Post("/v1/invites/{teamID}/accept", d.Teams.AcceptInvite)
+		r.Post("/v1/invites/{teamID}/decline", d.Teams.DeclineInvite)
 	})
 
 	// 运维工作台（只读）：设了 ADMIN_TOKEN 才挂载；登录端点复用认证限流防爆破

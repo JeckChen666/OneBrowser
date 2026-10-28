@@ -14,9 +14,13 @@ import {
   deriveAuthKey,
   deriveKEK,
   generateDEK,
+  generateIdentityKeypair,
   newKdfParams,
   unwrapDEK,
+  unwrapWith,
   wrapDEK,
+  wrapFor,
+  toB64,
   sha256Hex,
   randomId,
   randomSeed,
@@ -38,6 +42,7 @@ import {
 } from './snapshotEngine'
 import { untarTo } from './profileArchive'
 import { subkey } from './e2e'
+import { x25519 } from '@noble/curves/ed25519.js'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type {
@@ -48,7 +53,8 @@ import type {
   EnvView,
   KernelStatus,
   MainEvent,
-  ProxyConfig
+  ProxyConfig,
+  TeamInfo
 } from '@shared/types'
 
 interface PhaseEntry {
@@ -73,6 +79,11 @@ export class AppService {
   private baseMetas = new Map<string, { snapshotId: string; createdAt: string }>()
   private leaseInfo = new Map<string, string>() // envId → holderDeviceId
   private email: string | null = null
+  // 团队协作（V0.6）：身份密钥对 + 团队列表 + 已解封的 team DEK（teamId → 根密钥）
+  private identityPriv: Uint8Array | null = null
+  private identityPub = ''
+  private teams: TeamInfo[] = []
+  private teamDeks = new Map<string, Uint8Array>()
 
   constructor(
     public serverUrl: string,
@@ -90,6 +101,17 @@ export class AppService {
       onEnvUpdated: () => this.refreshEnvs().catch(() => {}),
       onReleased: () => {}
     })
+    // team.updated → 刷新团队与团队环境（叠加在 LeaseAgent 的 ws 消息处理之上）
+    {
+      const prev = this.cloud.onWsMessage
+      this.cloud.onWsMessage = (m) => {
+        if (m.type === 'team.updated') {
+          this.refreshTeams().catch(() => {})
+          this.refreshEnvs().catch(() => {})
+        }
+        prev?.(m)
+      }
+    }
     this.kernelManager = new KernelManager(
       () => this.store.kernelLocalExe,
       (p) => this.emit({ type: 'kernel', status: this.kernelStatus(p) })
@@ -245,7 +267,8 @@ export class AppService {
         message: p.message,
         hasBase: !!base,
         baseCreatedAt: base?.createdAt,
-        leaseHolder: this.leaseInfo.get(env.id)
+        leaseHolder: this.leaseInfo.get(env.id),
+        teamName: env.teamId ? this.teams.find((t) => t.id === env.teamId)?.name : undefined
       }
     })
     return {
@@ -277,12 +300,16 @@ export class AppService {
     const authKey = await deriveAuthKey(password, authKdf)
     const kek = await deriveKEK(password, kekKdf)
     const dek = generateDEK()
+    // 身份密钥对（V0.6 团队协作）：私钥以 KEK 包裹托管，公钥明文供他人包裹 team DEK
+    const kp = generateIdentityKeypair()
     await this.cloud.register({
       email,
       authKey,
       authKdf,
       wrappedDek: await wrapDEK(kek, dek),
-      kekKdf
+      kekKdf,
+      identityPub: toB64(kp.pub),
+      wrappedIdentityPriv: await wrapDEK(kek, kp.priv)
     })
     await this.login(email, password)
     this.notify('success', '注册成功，已自动登录')
@@ -301,10 +328,22 @@ export class AppService {
     const kek = await deriveKEK(password, resp.kekKdf)
     this.dek = await unwrapDEK(kek, resp.wrappedDek)
     this.kdf = { ...DEFAULT_KDF, salt: resp.kekKdf.salt }
+    // 身份私钥：新账号随注册生成；旧账号空态 → 本地生成 + 一次性回填（附录 A.7）
+    if (resp.wrappedIdentityPriv) {
+      this.identityPriv = await unwrapDEK(kek, resp.wrappedIdentityPriv)
+    } else {
+      const kp = generateIdentityKeypair()
+      this.identityPriv = kp.priv
+      await this.cloud
+        .setIdentity({ identityPub: toB64(kp.pub), wrappedIdentityPriv: await wrapDEK(kek, kp.priv) })
+        .catch((e) => this.notify('warning', `身份密钥回填失败（团队功能暂不可用）：${err(e)}`))
+    }
+    this.identityPub = resp.identityPub || toB64(x25519.getPublicKey(this.identityPriv))
     this.cloud.token = resp.token
     this.email = email
     this.store.setLastEmail(email)
     this.cloud.connectWS()
+    await this.refreshTeams()
     await this.refreshEnvs()
     this.notify('success', `已登录：${email}`)
   }
@@ -325,6 +364,98 @@ export class AppService {
     this.envs.clear()
     this.phases.clear()
     this.push()
+  }
+
+  // ---------- 团队（V0.6，附录 A）----------
+
+  /** 环境/快照/配置/os_crypt 的根密钥：团队环境=team DEK，个人环境=用户 DEK（换根不换管线） */
+  private rootKeyFor(env: Pick<EnvConfig, 'teamId'>): Uint8Array {
+    if (env.teamId) {
+      const k = this.teamDeks.get(env.teamId)
+      if (k) return k
+      throw new Error('团队密钥未解封（可能已被移出团队），请刷新重试')
+    }
+    return this.dek!
+  }
+
+  async refreshTeams(): Promise<void> {
+    if (!this.logged_in) return
+    const { teams } = await this.cloud.listTeams()
+    this.teams = teams
+    this.teamDeks.clear()
+    for (const t of teams) {
+      if (t.state !== 'active' || !this.identityPriv) continue
+      try {
+        this.teamDeks.set(t.id, await unwrapWith(this.identityPriv, t.wrappedTeamDek))
+      } catch (e) {
+        console.warn(`[teams] team DEK 解封失败 ${t.id}:`, e instanceof Error ? e.message : e)
+      }
+    }
+  }
+
+  getTeams(): TeamInfo[] {
+    return this.teams
+  }
+
+  async createTeam(name: string): Promise<void> {
+    if (!this.identityPriv || !this.dek) throw new Error('未登录或身份密钥未就绪')
+    const teamDek = generateDEK()
+    const { teamId } = await this.cloud.createTeam({
+      name,
+      wrappedSelfDek: await wrapFor(this.identityPub, teamDek)
+    })
+    this.teamDeks.set(teamId, teamDek) // 建团者立即可创建团队环境
+    await this.refreshTeams()
+    this.notify('success', `团队「${name}」已创建`)
+  }
+
+  async inviteMember(teamId: string, email: string, role: 'admin' | 'member' = 'member'): Promise<void> {
+    const teamDek = this.teamDeks.get(teamId)
+    if (!teamDek) throw new Error('团队密钥未解封（仅 owner/admin 可邀请）')
+    const u = await this.cloud.lookupUser(email)
+    await this.cloud.addTeamMember(teamId, {
+      userId: u.userId,
+      wrappedTeamDek: await wrapFor(u.identityPub, teamDek),
+      role
+    })
+    this.notify('success', `已邀请 ${email}（对方在团队页接受后生效）`)
+  }
+
+  async listTeamMembers(teamId: string): Promise<import('@shared/types').TeamMember[]> {
+    return (await this.cloud.listTeamMembers(teamId)).members
+  }
+
+  async revokeMember(teamId: string, userId: string): Promise<void> {
+    await this.cloud.revokeTeamMember(teamId, userId)
+    this.notify('success', '已移出该成员（其服务端访问即刻断开）')
+  }
+
+  /** DEK 轮换（owner，吊销后的可选加固）：新根仅对未来快照生效，成员本地缓存清空重拉 */
+  async rotateTeamDek(teamId: string): Promise<void> {
+    if (!this.identityPriv) throw new Error('身份密钥未就绪')
+    if (!this.teamDeks.get(teamId)) throw new Error('仅 owner 可轮换团队密钥')
+    const members = (await this.cloud.listTeamMembers(teamId)).members.filter((m) => m.state === 'active')
+    if (members.some((m) => !m.identityPub)) throw new Error('存在无身份密钥的成员，无法轮换')
+    const teamDek = generateDEK()
+    const items: Array<{ userId: string; wrappedTeamDek: string }> = []
+    for (const m of members) {
+      items.push({ userId: m.userId, wrappedTeamDek: await wrapFor(m.identityPub, teamDek) })
+    }
+    await this.cloud.rotateTeamDek(teamId, items)
+    this.notify('success', '团队密钥已轮换（新数据即刻用新密钥）')
+    await this.refreshTeams()
+  }
+
+  async acceptInvite(teamId: string): Promise<void> {
+    await this.cloud.acceptInvite(teamId)
+    await this.refreshTeams()
+    await this.refreshEnvs()
+    this.notify('success', '已加入团队，团队环境现已可见')
+  }
+
+  async declineInvite(teamId: string): Promise<void> {
+    await this.cloud.declineInvite(teamId)
+    await this.refreshTeams()
   }
 
   // ---------- 环境 ----------
@@ -349,7 +480,8 @@ export class AppService {
         l1SnapshotId?: string
       } = {}
       try {
-        cfg = await openConfig<typeof cfg>(this.dek!, row.id, row.configEnc)
+        const rootKey = row.teamId ? this.teamDeks.get(row.teamId) : this.dek
+        cfg = rootKey ? await openConfig<typeof cfg>(rootKey, row.id, row.configEnc) : {}
       } catch {
         // 配置解密失败（如密钥轮换后旧数据）——降级为默认配置
       }
@@ -372,6 +504,7 @@ export class AppService {
         kernelVersion: cfg.kernelVersion,
         sessionCheck: cfg.sessionCheck,
         l1SnapshotId: cfg.l1SnapshotId,
+        teamId: row.teamId || undefined,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
       })
@@ -384,7 +517,9 @@ export class AppService {
     // 回写缺 seed 的环境配置（best-effort；失败则下次刷新重试）
     for (const { row, cfg, seed } of seedBackfills) {
       try {
-        const configEnc = await sealConfig(this.dek!, row.id, { ...cfg, seed })
+        const rootKey = row.teamId ? this.teamDeks.get(row.teamId) : this.dek
+        if (!rootKey) continue
+        const configEnc = await sealConfig(rootKey, row.id, { ...cfg, seed })
         await this.cloud.updateEnv(row.id, { name: row.name, configEnc })
       } catch (e) {
         console.warn(`[refreshEnvs] seed 回填失败 ${row.id}:`, e instanceof Error ? e.message : e)
@@ -401,7 +536,9 @@ export class AppService {
     }
     const id = randomId()
     const hosting = input.hosting === 'builtin' ? 'builtin' : input.hosting === 'browser' ? 'browser' : 'kernel'
-    const configEnc = await sealConfig(this.dek!, id, {
+    const rootKey = input.teamId ? this.teamDeks.get(input.teamId) : this.dek
+    if (!rootKey) throw new Error('团队密钥未解封，无法创建团队环境')
+    const configEnc = await sealConfig(rootKey, id, {
       hosting,
       homepage: input.homepage,
       seed: input.seed || randomSeed(),
@@ -409,7 +546,7 @@ export class AppService {
       fingerprint: input.fingerprint,
       sessionCheck: input.sessionCheck
     })
-    await this.cloud.createEnv({ id, name: input.name, mode: input.mode, configEnc })
+    await this.cloud.createEnv({ id, name: input.name, mode: input.mode, configEnc, teamId: input.teamId })
     await this.refreshEnvs()
     this.notify('success', `环境「${input.name}」已创建（${hosting === 'kernel' ? '指纹内核' : hosting === 'browser' ? '标准浏览器' : '内置轻量'}）`)
   }
@@ -432,7 +569,7 @@ export class AppService {
       // 非法 seed 会毒化内核（KI-1）：必须在此拦下，不能静默换值
       throw new Error('指纹种子必须是 1~2147483647 的整数')
     }
-    const configEnc = await sealConfig(this.dek!, id, {
+    const configEnc = await sealConfig(this.rootKeyFor(cur), id, {
       hosting: patch.hosting !== undefined ? patch.hosting : cur.hosting,
       homepage: patch.homepage !== undefined ? patch.homepage : cur.homepage,
       seed: patch.seed !== undefined ? patch.seed : cur.seed,
@@ -471,7 +608,7 @@ export class AppService {
     // （win 漫游模式直接采用 mac/linux 的 v11 AES-CBC 线格式，见 kernel-build README）
     const osCryptKey =
       env.hosting === 'kernel' && this.dek
-        ? Buffer.from(subkey(this.dek, `os-crypt:${envId}`).slice(0, 16)).toString('hex')
+        ? Buffer.from(subkey(this.rootKeyFor(env), `os-crypt:${envId}`).slice(0, 16)).toString('hex')
         : undefined
 
     // kernel 承载：先确保内核就绪（可能触发首次下载）；docker 模式无需原生内核
@@ -662,7 +799,7 @@ export class AppService {
   /** 把 L1 兜底快照 id 记入环境配置（E2E 密文），builtin 打开 L2 基线时回退用 */
   private async rememberL1Snapshot(env: EnvConfig, snapshotId: string): Promise<void> {
     try {
-      const cfgEnc = await sealConfig(this.dek!, env.id, {
+      const cfgEnc = await sealConfig(this.rootKeyFor(env), env.id, {
         hosting: env.hosting,
         homepage: env.homepage,
         seed: env.seed,
@@ -692,8 +829,8 @@ export class AppService {
     const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as SnapshotManifest
     if (manifest.snapshotId !== expectSnapId) throw new Error('快照 ID 不匹配')
 
+    const env = this.envs.get(envId)
     if (manifest.kind === 'files') {
-      const env = this.envs.get(envId)
       // builtin（Electron partition）无法消费 profile 目录 → 回退到双写时的 L1 结构化快照
       if (env && env.hosting !== 'kernel') {
         if (env.l1SnapshotId) {
@@ -704,7 +841,7 @@ export class AppService {
         throw new Error('该基线为文件级快照（L2），builtin 承载需先在内核设备重新保存基线以生成结构化副本')
       }
       const t0 = Date.now()
-      const tarBytes = openFiles(this.dek!, { manifest, blob })
+      const tarBytes = openFiles(this.rootKeyFor(env!), { manifest, blob })
       const dir = path.join(path.join(os.tmpdir(), 'ob-restore'), `${envId}-${randomBytes(4).toString('hex')}`)
       await untarTo(Buffer.from(tarBytes), dir, manifest.payload.format)
       console.log(
@@ -717,7 +854,7 @@ export class AppService {
       manifest,
       blobB64: Buffer.from(blob).toString('base64')
     }
-    return { kind: 'structured', payload: await openStructured(this.dek!, sealed) }
+    return { kind: 'structured', payload: await openStructured(env ? this.rootKeyFor(env) : this.dek!, sealed) }
   }
 
   /** 抓取运行中环境 → 加密 → 上传 → commit，返回 snapshotId。
@@ -739,7 +876,7 @@ export class AppService {
         const data = await this.kernelHost.capture(envId)
         const up1 = await this.cloud.createUpload(envId, this.store.deviceId)
         const sealed1 = await seal({
-          dek: this.dek!,
+          dek: this.rootKeyFor(env),
           kdf: this.kdf,
           envId,
           snapshotId: up1.snapshotId,
@@ -760,7 +897,7 @@ export class AppService {
 
       const packed = await this.kernelHost.captureProfile(envId)
       const sealed = await sealFiles({
-        dek: this.dek!,
+        dek: this.rootKeyFor(env),
         kdf: this.kdf,
         envId,
         snapshotId: up.snapshotId,
@@ -789,7 +926,7 @@ export class AppService {
     const host = this.hostFor(env)
     const data = await host.capture(envId)
     const sealed = await seal({
-      dek: this.dek!,
+      dek: this.rootKeyFor(env),
       kdf: this.kdf,
       envId,
       snapshotId: up.snapshotId,

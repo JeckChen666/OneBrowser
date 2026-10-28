@@ -55,7 +55,8 @@ func (s *Service) HandleClientMsg(ctx context.Context, id auth.Identity, in ws.I
 		case res.Granted:
 			reply(ws.OutMsg{Type: ws.TypeGranted, EnvID: in.EnvID, SnapshotID: res.SnapshotID, Stale: res.Stale})
 		default:
-			reply(ws.OutMsg{Type: ws.TypePending, EnvID: in.EnvID, HolderDeviceID: res.HolderDeviceID, DeadlineMS: s.deadlineMS()})
+			reply(ws.OutMsg{Type: ws.TypePending, EnvID: in.EnvID, HolderDeviceID: res.HolderDeviceID,
+				HolderEmail: res.HolderEmail, DeadlineMS: s.deadlineMS()})
 		}
 	case ws.TypeRelease:
 		log.Printf("[lease] release env=%s device=%s snapshot=%q", in.EnvID, id.DeviceID, in.SnapshotID)
@@ -84,6 +85,7 @@ type AcquireResult struct {
 	SnapshotID     string // granted 时待下载的基线（可为空 = 冷启动）
 	Stale          bool
 	HolderDeviceID string // pending 时
+	HolderEmail    string // pending 且团队环境时：持有成员邮箱（明文元数据，附录 A.6）
 }
 
 func (s *Service) Acquire(ctx context.Context, id auth.Identity, envID string) (AcquireResult, error) {
@@ -94,8 +96,12 @@ func (s *Service) Acquire(ctx context.Context, id auth.Identity, envID string) (
 	defer tx.Rollback(context.Background()) //nolint:errcheck
 
 	var mode string
-	err = tx.QueryRow(ctx, `SELECT mode FROM environments
-		WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE`, envID, id.UserID).Scan(&mode)
+	err = tx.QueryRow(ctx, `SELECT mode FROM environments e
+		WHERE e.id=$1 AND e.deleted_at IS NULL AND
+		  ((e.user_id=$2 AND e.team_id IS NULL) OR
+		   (e.team_id IS NOT NULL AND EXISTS(SELECT 1 FROM team_members m
+		     WHERE m.team_id = e.team_id AND m.user_id=$2 AND m.state='active')))
+		FOR UPDATE OF e`, envID, id.UserID).Scan(&mode)
 	if err != nil {
 		return AcquireResult{}, errNotFound
 	}
@@ -149,17 +155,33 @@ func (s *Service) Acquire(ctx context.Context, id auth.Identity, envID string) (
 				Type: ws.TypeEvict, EnvID: envID, DeadlineMS: s.deadlineMS(),
 			})
 		}
-		return AcquireResult{HolderDeviceID: holder}, nil
+		return AcquireResult{HolderDeviceID: holder, HolderEmail: s.holderEmail(ctx, envID)}, nil
 
 	default: // state == evicting
 		if pending == id.DeviceID { // 幂等：本设备已在等待
 			if err := tx.Commit(ctx); err != nil {
 				return AcquireResult{}, err
 			}
-			return AcquireResult{HolderDeviceID: holder}, nil
+			return AcquireResult{HolderDeviceID: holder, HolderEmail: s.holderEmail(ctx, envID)}, nil
 		}
 		return AcquireResult{}, errEvictionBusy
 	}
+}
+
+// holderEmail 团队环境的租约持有者邮箱（个人环境返回空，客户端展示设备号）。
+// best-effort：查不到不影响租约语义。
+func (s *Service) holderEmail(ctx context.Context, envID string) string {
+	var email string
+	var isTeam bool
+	err := s.DB.Pool.QueryRow(ctx, `
+		SELECT u.email, (e.team_id IS NOT NULL) FROM leases l
+		JOIN environments e ON e.id = l.env_id
+		JOIN users u ON u.id = l.user_id
+		WHERE l.env_id=$1`, envID).Scan(&email, &isTeam)
+	if err != nil || !isTeam {
+		return ""
+	}
+	return email
 }
 
 func (s *Service) Release(ctx context.Context, id auth.Identity, envID, snapshotID string) error {

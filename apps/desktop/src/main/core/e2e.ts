@@ -5,6 +5,7 @@
 //   每快照子密钥 = HKDF-SHA256(DEK, salt=purpose)
 import { argon2id } from '@noble/hashes/argon2.js'
 import { hkdfSync, randomBytes, randomInt, createHash } from 'node:crypto'
+import { x25519 } from '@noble/curves/ed25519.js'
 
 export interface KdfParamsJson {
   alg: 'argon2id'
@@ -110,6 +111,43 @@ export async function wrapDEK(kek: Uint8Array, dek: Uint8Array): Promise<string>
 export async function unwrapDEK(kek: Uint8Array, wrapped: string): Promise<Uint8Array> {
   const env = JSON.parse(wrapped) as Envelope
   return gcmDecrypt(kek, fromB64(env.iv), fromB64(env.ct))
+}
+
+// --- 身份密钥对与团队信封（V0.6 团队协作，附录 A.1）---
+// X25519-ECDH → HKDF-SHA256(salt=ephPub, info='onebrowser/p2p/v1') → AES-256-GCM。
+// wrapFor：发送方临时密钥对 × 接收方公钥；unwrapWith：接收方私钥 × 信封内临时公钥。
+
+export interface P2pEnvelope {
+  v: 1
+  eph: string // 发送方临时公钥 b64（双方共同持有，兼作 HKDF salt）
+  iv: string
+  ct: string
+}
+
+export function generateIdentityKeypair(): { pub: Uint8Array; priv: Uint8Array } {
+  const priv = x25519.utils.randomSecretKey()
+  return { priv, pub: x25519.getPublicKey(priv) }
+}
+
+async function p2pKey(priv: Uint8Array, peerPub: Uint8Array, ephPub: Uint8Array): Promise<Uint8Array> {
+  const shared = x25519.getSharedSecret(priv, peerPub)
+  return new Uint8Array(hkdfSync('sha256', shared, ephPub, Buffer.from('onebrowser/p2p/v1'), 32))
+}
+
+/** 用接收方公钥包裹任意 32B 密钥（team DEK / 身份私钥托管均可复用） */
+export async function wrapFor(recipientPubB64: string, key: Uint8Array): Promise<string> {
+  const ephPriv = x25519.utils.randomSecretKey()
+  const ephPub = x25519.getPublicKey(ephPriv)
+  const wk = await p2pKey(ephPriv, fromB64(recipientPubB64), ephPub)
+  const { iv, ct } = await gcmEncrypt(wk, key)
+  return JSON.stringify({ v: 1, eph: toB64(ephPub), iv: toB64(iv), ct: toB64(ct) } satisfies P2pEnvelope)
+}
+
+export async function unwrapWith(myPriv: Uint8Array, wrapped: string): Promise<Uint8Array> {
+  const env = JSON.parse(wrapped) as P2pEnvelope
+  const ephPub = fromB64(env.eph)
+  const wk = await p2pKey(myPriv, ephPub, ephPub)
+  return gcmDecrypt(wk, fromB64(env.iv), fromB64(env.ct))
 }
 
 export function sha256Hex(buf: Uint8Array): string {
