@@ -442,8 +442,27 @@ export class AppService {
       items.push({ userId: m.userId, wrappedTeamDek: await wrapFor(m.identityPub, teamDek) })
     }
     await this.cloud.rotateTeamDek(teamId, items)
-    this.notify('success', '团队密钥已轮换（新数据即刻用新密钥）')
+    // 轮换时旧根在手：把团队环境的配置全部重密封到新根，否则刷新时配置解密降级
+    // （homepage/hosting 归零）。快照保持冷启动语义（旧根加密无法追封）。
+    const newDek = teamDek
+    for (const env of this.envs.values()) {
+      if (env.teamId !== teamId) continue
+      const cfgEnc = await sealConfig(newDek, env.id, {
+        hosting: env.hosting,
+        homepage: env.homepage,
+        seed: env.seed,
+        proxy: env.proxy,
+        fingerprint: env.fingerprint,
+        kernelVersion: env.kernelVersion,
+        sessionCheck: env.sessionCheck,
+        l1SnapshotId: env.l1SnapshotId
+      })
+      await this.cloud.updateEnv(env.id, { name: env.name, configEnc: cfgEnc })
+    }
+    this.teamDeks.set(teamId, newDek)
+    this.notify('success', '团队密钥已轮换（配置已重密封；旧基线需重新登录保存）')
     await this.refreshTeams()
+    await this.refreshEnvs()
   }
 
   async acceptInvite(teamId: string): Promise<void> {
@@ -625,7 +644,14 @@ export class AppService {
     if (env.mode === 'snapshot') {
       this.setPhase(envId, 'opening')
       console.log(`[openEnv] ${envId} 下载基线…`)
-      const plan = await this.downloadBase(envId)
+      // 解密失败（团队 DEK 轮换后的旧基线等）→ 降级冷启动并警示，不阻断打开
+      let plan: RestorePlan | null = null
+      try {
+        plan = await this.downloadBase(envId)
+      } catch (e) {
+        console.warn(`[openEnv] 基线解密失败（冷启动）:`, e instanceof Error ? e.message : e)
+        this.notify('warning', `「${env.name}」基线无法解密（可能为密钥轮换前保存），已冷启动；请重新登录并保存新基线`)
+      }
       console.log(`[openEnv] ${envId} 打开（hosting=${env.hosting}, restore=${plan ? plan.kind : '首次'}）`)
       if (plan?.kind === 'files') {
         // L2：profile 已解包到 plan.dir，内核直接以它为 user-data-dir 启动；

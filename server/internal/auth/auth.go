@@ -226,9 +226,9 @@ func (s *Service) HandleSetIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tag, err := s.DB.Pool.Exec(r.Context(),
-		`UPDATE users SET identity_pub=$3, wrapped_identity_priv=$4
+		`UPDATE users SET identity_pub=$2, wrapped_identity_priv=$3
 		 WHERE id=$1 AND identity_pub='' AND wrapped_identity_priv=''`,
-		id.UserID, "", req.IdentityPub, req.WrappedIdentityPriv)
+		id.UserID, req.IdentityPub, req.WrappedIdentityPriv)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeErr(w, http.StatusConflict, "already_set", "身份密钥已存在，不可覆盖")
 		return

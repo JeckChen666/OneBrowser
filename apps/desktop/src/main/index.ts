@@ -9,6 +9,7 @@ const serverUrl = process.env.ONEBROWSER_SERVER || 'http://127.0.0.1:8787'
 const appDir = fileURLToPath(new URL('.', import.meta.url))
 const e2eMode =
   process.argv.includes('--e2e') ||
+  process.argv.includes('--e2e-teams') ||
   process.argv.includes('--e2e-interop') ||
   process.argv.includes('--e2e-fp') ||
   process.argv.includes('--e2e-l2') ||
@@ -157,6 +158,18 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--e2e')) {
     const { runE2E } = await import('./e2e-run')
     const code = await runE2E()
+    app.exit(code)
+    return
+  }
+
+  if (process.argv.includes('--e2e-teams')) {
+    const { runE2ETeams } = await import('./e2e-teams')
+    let code = 1
+    try {
+      code = await runE2ETeams()
+    } catch (e) {
+      console.error('[e2e-teams] 异常终止:', e)
+    }
     app.exit(code)
     return
   }

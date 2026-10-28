@@ -12,6 +12,7 @@
     "start": "electron-vite preview",
     "e2e": "electron-vite build && electron . --e2e",
     "e2e:run": "electron . --e2e",
+    "e2e:teams": "electron-vite build && electron . --e2e-teams",
     "e2e:interop": "electron-vite build && electron . --e2e-interop",
     "kernel-smoke": "electron-vite build && electron . --kernel-smoke --docker",
     "e2e:fp": "electron-vite build && electron . --e2e-fp",

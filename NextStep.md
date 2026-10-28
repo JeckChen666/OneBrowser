@@ -12,7 +12,28 @@
 3. **计划变更时**：同步修订本文件（它必须始终反映真实的下一步，而不是过期的愿望清单）。
 4. 相关背景文档：总体规划 `docs/project-plan.md` · 版本计划 `docs/v0.2.0-plan.md` · 排障与已知问题 `docs/v0.2.0-s3-notes.md`。
 
-## 当前状态（快照，2026-10-28，V0.6 团队协作代码完成；测试后置、只本地提交）
+## 当前状态（快照，2026-10-28，统一测试批全绿收口；V0.6 代码待真实多用户复验）
+
+- **统一测试批已收口（本工作单元，全绿）**：
+  ①本地栈重启（Docker 引擎/PG/localstack 隔夜又断，已恢复）+ 0002 迁移落测试库 ✅
+  ②server 全量回归绿（admin/auth/leases/ratelimit/snapshots）
+  ③**新 teams 服务端测试 2 组全绿**（TestTeamsFullFlow：建团/公钥查询/邀请 pending→accept
+  角色闸/member 建环境归因 owner/快照归因/轮换覆盖校验/吊销 owner 拦截/吊销断访/重邀拒绝；
+  TestSetIdentityBackfill：回填+不可覆盖）——**修掉 1 个真 bug**（HandleSetIdentity SQL
+  占位参数多余导致恒 409）
+  ④desktop e2e 17×2 绿（身份对注册未破坏旧链路）
+  ⑤**新 e2e-teams 17 项全绿**（A邀B免登录共享/吊C断访/S3密文/轮换语义）——**测出 1 个真
+  设计缺陷并修复**：DEK 轮换使旧根密封的环境配置解密降级（homepage 归零）→ owner 轮换时
+  同时重密封团队环境配置；旧基线不可解 → 打开降级冷启动+警示，重登录存新基线恢复
+  （轮换语义已回写附录 A.5；TM.5 三段断言）
+  ⑥browser-smoke 3 绿；**tour 扩到八站**（新增团队页真实建团+关于弹层真实更新检查
+  releases/latest→tags 回退），全走 frame-sub，截图目检过
+  ⑦**增量快照量化门：不立项**（10/50/200MB 三档实测：二次保存 0.3/0.8/2.4s，50MB 远低
+  5s 门限；加密吞吐 764–1284MB/s，上传占比最大；bench 脚本入库 scripts/snapshot-bench.mjs，
+  踩 GNU tar 盘符老坑已绕）
+  ⑧dist:win 出包 + 打包形态验收三绿（静默安装 e2e=0/bsmoke=0/tour=0）。
+  **遗留**：V0.6 团队流尚未在真实多设备/多用户环境复验（本地 e2e 是同机三实例）；
+  tour 的对话框关闭用 ESC 兜底仍偶发遮挡截图（工具性瑕疵，不阻断）。
 
 - **V0.6 团队协作实现代码已完成（本工作单元，未测，归统一测试批）**：按附录 A 蓝本全量落地——
   **服务端**：0002_teams 迁移（users 身份对两列 + teams/team_members + environments.team_id）；
@@ -103,16 +124,14 @@
 
 ## 下一步（按优先级）
 
-1. **统一测试批（攒齐后一次跑；含 V0.5-A 与 V0.6 全部欠账）**：
-   ①V0.6 服务端 Go 测试（teams 鉴权流/邀请吊销轮换/环境可见性/快照 owner 归因/0002 迁移）
-   ②V0.6 桌面 e2e：A 邀 B → B 免登录开团队环境基线；A 吊 C → C 拉新基线 403；S3 密文抽查
-   ③desktop e2e 17 · browser-smoke 3 · screenshot-tour（加团队页站点）④dist:win 打包验收
-   ⑤server 全量回归 ⑥增量快照量化门（10/50/200MB）⑦更新检查真实链路（含 tags 回退）。
-   涉及对外发布（--publish 挂 Release 资产）需用户确认。
+1. **推送远端**：本地已积压 5 个提交（工作规矩 / V0.5 规划+PR 材料 / V0.5-A 更新代码 /
+   V0.6 团队实现 / 本测试批），**等用户明确说推送再执行**
+   （`git -c http.proxy= -c https.proxy= push origin main`）。
 2. **os_crypt 上游 PR 提交**：材料在 `scripts/kernel-build/upstream-pr/`，
    **需用户过目 pr-body-draft.md 后放行**（对外动作）。
 3. **代码签名证书**（需用户决策采购）：签发后随 V0.5-C 全量自动更新一起接入。
 4. **服务端生产部署演练**：需域名与对外主机；production.md 流程已备（含 ADMIN_TOKEN）。
+5. **V0.6 真实多设备复验**（可选）：两台真机走邀请→共享→吊销（本地 e2e 为同机三实例）。
 
 ## 已完成归档
 

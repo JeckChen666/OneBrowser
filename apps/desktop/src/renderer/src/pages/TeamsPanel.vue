@@ -198,7 +198,7 @@ async function revoke(userId: string): Promise<void> {
 async function rotate(t: TeamInfo): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      '轮换后团队的新快照立即使用新密钥。请确保在线成员刷新后能解封新密钥。确定轮换？',
+      '轮换后团队的新快照立即使用新密钥，但旧基线将无法解密（成员需重新登录并保存新基线）。仅建议在成员流失等安全事件后使用。确定轮换？',
       `轮换「${t.name}」的团队密钥`,
       { type: 'warning', confirmButtonText: '轮换', cancelButtonText: '取消' }
     )

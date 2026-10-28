@@ -238,6 +238,32 @@ async function tourRun(
   await waitFor(`document.querySelector('.el-dialog') && ${overlayVisible}`, '编辑对话框打开')
   await sleep(400)
   await shot('05-edit-dialog.png')
+  await runJs(`document.querySelector('.el-dialog__headerbtn')?.click(), 'ok'`)
+  await sleep(400)
+
+  // 团队页：建演示团队 → 切到团队视图（真实走 ob IPC + 服务端）
+  await runJs(`window.ob.teamCreate('演示团队').then(() => 'ok')`)
+  await sleep(600)
+  await runJs(`(() => { const l = [...document.querySelectorAll('.el-radio-button')].find(x => x.textContent.includes('团队'));
+    if (!l) return 'no-team-tab'; l.click(); return 'ok' })()`)
+  await waitFor(`document.querySelector('.teams-panel')`, '团队面板出现')
+  await sleep(600)
+  await shot('06-teams-panel.png')
+
+  // 关于弹层 + 检查更新（真实链路：GitHub releases/latest→tags 回退）
+  await runJs(`(() => { const l = [...document.querySelectorAll('.el-radio-button')].find(x => x.textContent.includes('环境'));
+    if (l) l.click(); return 'ok' })()`)
+  await sleep(400)
+  await runJs(`document.querySelector('.ver.link')?.click(), 'ok'`)
+  await waitFor(`document.querySelector('.about-pop')`, '关于弹层打开')
+  await clickButton('检查更新')
+  await waitFor(
+    `document.querySelector('.about-pop') && /已是最新|发现新版/.test(document.querySelector('.about-pop').textContent)`,
+    '更新检查结果返回',
+    15000
+  )
+  await sleep(300)
+  await shot('07-about-update.png')
 
   const finalState = await runJs(`window.ob.getState().then(s => JSON.stringify({ envs: s.envs.map(e => [e.env.name, e.env.hosting, e.phase]) }))`)
   console.log(`[tour] final=${finalState}`)
