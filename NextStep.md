@@ -29,8 +29,11 @@
   `publish: github`（阶段 b electron-updater 更新源预留）。**注意**：仓库尚无正式
   GitHub Release（只有 tag），tags 回退路径是当前实际生效路径；正式发布动作
   （--publish=always 挂安装包资产）归测试批且需用户确认。typecheck 绿（仅编译自检）。
-- **已推送远端**：main 全部提交 + v0.4.0 / v0.4.0-win-prepared / v0.4.1 / v0.4.2 四个
-  tag 均在 github.com/JeckChen666/OneBrowser（本地积压清零，后续随提交即推）。
+- **已推送远端（截至 403be18）**：main 全部提交 + 四个 tag 均在 github.com/JeckChen666/
+  OneBrowser。**工作规矩（用户指令，2026-10-28）**：此后一律只本地提交，
+  **不主动推送远端**——push 会弹 GitHub 登录打扰用户，仅在用户明确要求时执行。
+  本地待推提交可随时 `git -c http.proxy= -c https.proxy= push origin main` 一键补推
+  （默认代理 7897 未起时需绕过）。
 - **V0.5 规划已出（本工作单元）**：`docs/v0.5.0-plan.md`——①自动更新两阶段
   （a 无签名过渡「检查更新→直达 Releases」/ b 证书到位后 electron-updater 全量差分，
   blockmap 原料已在产出）；②增量快照**先量化后决定**（决策门：50MB 档二次保存
