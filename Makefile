@@ -1,4 +1,4 @@
-.PHONY: infra infra-down infra-logs server site desktop test test-db e2e desktop-build clean
+.PHONY: infra infra-down infra-logs server site desktop test test-db e2e e2e-teams desktop-build clean
 
 # 一键开发栈：Postgres（docker）+ MinIO（本地二进制 :9000）
 infra:
@@ -46,5 +46,9 @@ dist-mac:
 # 端到端验证：需要先 make infra && make server && make site（各自后台运行）
 e2e: desktop-build
 	cd apps/desktop && pnpm e2e
+
+# 团队协作端到端（V0.6：A邀B共享 / 吊C断访 / S3密文 / 轮换语义）
+e2e-teams: desktop-build
+	cd apps/desktop && pnpm e2e:teams
 
 clean: infra-down-v

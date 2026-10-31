@@ -198,6 +198,28 @@ async function tourRun(
     }
   }
   const overlayVisible = `[...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none')`
+  /** 关闭当前 overlay：点关闭钮 → ESC 兜底，直到 overlay 真正消失（偶发点击无效的规避） */
+  const closeOverlay = async (label: string): Promise<void> => {
+    await runJs(`document.querySelector('.el-drawer__close-btn')?.click(), 'ok'`)
+    for (let i = 0; i < 6; i++) {
+      const still = await win.webContents.executeJavaScript(`!!(${overlayVisible})`)
+      if (!still) return
+      await sleep(300)
+      if (i === 2) {
+        // ESC 兜底（Element Plus 对话框默认 closeOnPressEscape）
+        await win.webContents.executeJavaScript(
+          `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), 'ok'`
+        )
+      }
+    }
+    // 诊断：为什么还开着
+    const diag = await win.webContents.executeJavaScript(
+      `JSON.stringify([...document.querySelectorAll('.el-overlay')].map(o => ({
+        display: getComputedStyle(o).display, cls: o.className.slice(0, 60)
+      })))`
+    )
+    throw new Error(`等待超时: ${label}关闭（overlay=${diag}）`)
+  }
 
   // 注册视图：切到注册模式，拍「主密码不可找回」警示与确认勾选
   await clickButton('没有账号？注册一个')
@@ -230,16 +252,14 @@ async function tourRun(
   await waitFor(`document.querySelector('.el-drawer') && ${overlayVisible}`, '详情抽屉打开')
   await sleep(400)
   await shot('04-detail-drawer.png')
-  await runJs(`document.querySelector('.el-drawer__close-btn')?.click(), 'ok'`)
-  await sleep(500)
+  await closeOverlay('抽屉')
 
   // 编辑对话框
   await clickButton('编辑')
   await waitFor(`document.querySelector('.el-dialog') && ${overlayVisible}`, '编辑对话框打开')
   await sleep(400)
   await shot('05-edit-dialog.png')
-  await runJs(`document.querySelector('.el-dialog__headerbtn')?.click(), 'ok'`)
-  await sleep(400)
+  await closeOverlay('对话框')
 
   // 团队页：建演示团队 → 切到团队视图（真实走 ob IPC + 服务端）
   await runJs(`window.ob.teamCreate('演示团队').then(() => 'ok')`)

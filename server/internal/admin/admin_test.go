@@ -257,6 +257,120 @@ func TestAdminDataShape(t *testing.T) {
 	}
 }
 
+// TestAdminTeamsView 团队只读视图（V0.6）：归因计数与团队环境标注。
+func TestAdminTeamsView(t *testing.T) {
+	db, _, h := newSvc(t)
+	ctx := context.Background()
+
+	seed := func(id, email, pub string) {
+		_, err := db.Pool.Exec(ctx,
+			`INSERT INTO users (id, email, verifier, auth_kdf, wrapped_dek, kek_kdf, identity_pub)
+			 VALUES ($1,$2,'v','{}','w','{}',$3)`, id, email, pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("u-own", "owner@t.local", "pub-own")
+	seed("u-mem", "member@t.local", "pub-mem")
+	seed("u-out", "outsider@t.local", "")
+
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO teams (id, name, owner_id) VALUES ('t-1', '形状团队', 'u-own')`); err != nil {
+		t.Fatal(err)
+	}
+	members := []struct{ uid, role, state string }{
+		{"u-own", "owner", "active"},
+		{"u-mem", "member", "active"},
+		{"u-out", "member", "pending"},
+	}
+	for _, m := range members {
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO team_members (team_id, user_id, role, state, wrapped_team_dek)
+			VALUES ('t-1',$1,$2,$3,'env')`, m.uid, m.role, m.state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 团队环境（归因 owner）+ 其基线快照；另有 outsider 的个人环境
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO environments (id, user_id, name, mode, team_id)
+		VALUES ('te-1', 'u-own', '团队环境', 'snapshot', 't-1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO snapshots (id, env_id, user_id, device_id, state, size_bytes)
+		VALUES ('ts-1', 'te-1', 'u-own', 'dev-x', 'ready', 8192)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO environments (id, user_id, name, mode)
+		VALUES ('pe-1', 'u-out', '个人环境', 'snapshot')`); err != nil {
+		t.Fatal(err)
+	}
+
+	ck := login(t, h, testToken)
+	get := func(path string) []map[string]any {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", path, nil)
+		r.AddCookie(ck)
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s 应 200，得到 %d: %s", path, w.Code, w.Body.String())
+		}
+		var arr []map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &arr)
+		return arr
+	}
+
+	// teams：active 2 / pending 1 / envs 1 / snapBytes 8192
+	teams := get("/api/teams")
+	if len(teams) != 1 {
+		t.Fatalf("teams 应 1 条: %v", teams)
+	}
+	tm := teams[0]
+	if tm["name"] != "形状团队" || tm["ownerEmail"] != "owner@t.local" {
+		t.Fatalf("teams 基本字段不符: %v", tm)
+	}
+	if tm["members"].(float64) != 2 || tm["pendingInvites"].(float64) != 1 || tm["envs"].(float64) != 1 {
+		t.Fatalf("teams 归因计数不符: %v", tm)
+	}
+	if tm["snapBytes"].(float64) != 8192 {
+		t.Fatalf("teams.snapBytes 应 8192: %v", tm)
+	}
+
+	// envs：团队环境带 team 标注，个人环境不带
+	envs := get("/api/envs")
+	var teamEnv, personalEnv map[string]any
+	for _, e := range envs {
+		if e["name"] == "团队环境" {
+			teamEnv = e
+		} else {
+			personalEnv = e
+		}
+	}
+	if teamEnv == nil || teamEnv["team"] != "形状团队" {
+		t.Fatalf("团队环境应带 team 标注: %v", teamEnv)
+	}
+	if personalEnv == nil {
+		t.Fatal("个人环境应存在")
+	}
+	if _, has := personalEnv["team"]; has {
+		t.Fatalf("个人环境不应有 team 标注: %v", personalEnv)
+	}
+
+	// overview：teams 计数
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/overview", nil)
+	r.AddCookie(ck)
+	h.ServeHTTP(w, r)
+	var ov map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	if ov["teams"].(float64) != 1 {
+		t.Fatalf("overview.teams 应 1: %v", ov)
+	}
+}
+
 func TestAdminIndexPage(t *testing.T) {
 	_, _, h := newSvc(t)
 	w := httptest.NewRecorder()
