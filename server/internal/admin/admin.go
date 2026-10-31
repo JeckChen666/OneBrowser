@@ -55,6 +55,7 @@ func (s *Service) Handler(authLimit func(http.HandlerFunc) http.HandlerFunc) htt
 		r.Use(s.requireAdmin)
 		r.Get("/api/overview", s.HandleOverview)
 		r.Get("/api/users", s.HandleUsers)
+		r.Get("/api/teams", s.HandleTeams)
 		r.Get("/api/envs", s.HandleEnvs)
 		r.Get("/api/snapshots", s.HandleSnapshots)
 	})
@@ -144,6 +145,7 @@ func (s *Service) HandleIndex(w http.ResponseWriter, _ *http.Request) {
 func (s *Service) HandleOverview(w http.ResponseWriter, r *http.Request) {
 	var o struct {
 		Users       int64   `json:"users"`
+		Teams       int64   `json:"teams"`
 		Envs        int64   `json:"envs"`
 		Snapshots   int64   `json:"snapshots"`
 		SnapBytes   int64   `json:"snapBytes"`
@@ -165,13 +167,14 @@ func (s *Service) HandleOverview(w http.ResponseWriter, r *http.Request) {
 	o.AuthRateMin = s.Cfg.AuthRatePerMin
 	if err := s.DB.Pool.QueryRow(r.Context(), `
 		SELECT (SELECT COUNT(*) FROM users),
+		       (SELECT COUNT(*) FROM teams),
 		       (SELECT COUNT(*) FROM environments WHERE deleted_at IS NULL),
 		       (SELECT COUNT(*) FROM snapshots WHERE state='ready'),
 		       (SELECT COALESCE(SUM(size_bytes),0) FROM snapshots WHERE state='ready'),
 		       (SELECT COUNT(*) FROM snapshots WHERE state='uploading'),
 		       (SELECT COUNT(*) FROM leases WHERE state IN ('active','evicting')),
 		       (SELECT COUNT(*) FROM auth_sessions WHERE expires_at > now())
-	`).Scan(&o.Users, &o.Envs, &o.Snapshots, &o.SnapBytes, &o.Uploadings, &o.Leases, &o.Sessions); err != nil {
+	`).Scan(&o.Users, &o.Teams, &o.Envs, &o.Snapshots, &o.SnapBytes, &o.Uploadings, &o.Leases, &o.Sessions); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "db_error", "message": err.Error()}})
 		return
 	}
@@ -219,13 +222,52 @@ func (s *Service) HandleUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// HandleTeams 团队只读视图（V0.6，附录 A.6）：元数据明文；team DEK 信封为密文不可见。
+func (s *Service) HandleTeams(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.DB.Pool.Query(r.Context(), `
+		SELECT t.name, o.email, t.created_at,
+		       (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND m.state='active'),
+		       (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND m.state='pending'),
+		       (SELECT COUNT(*) FROM environments e WHERE e.team_id = t.id AND e.deleted_at IS NULL),
+		       (SELECT COALESCE(SUM(sn.size_bytes),0) FROM snapshots sn
+		          JOIN environments e2 ON e2.id = sn.env_id
+		          WHERE e2.team_id = t.id AND sn.state='ready')
+		FROM teams t
+		JOIN users o ON o.id = t.owner_id
+		ORDER BY t.created_at DESC
+		LIMIT 500`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "db_error", "message": err.Error()}})
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var name, owner string
+		var createdAt time.Time
+		var active, pending, envs int64
+		var bytes int64
+		if err := rows.Scan(&name, &owner, &createdAt, &active, &pending, &envs, &bytes); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "scan_error", "message": err.Error()}})
+			return
+		}
+		out = append(out, map[string]any{
+			"name": name, "ownerEmail": owner, "createdAt": createdAt,
+			"members": active, "pendingInvites": pending, "envs": envs, "snapBytes": bytes,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Service) HandleEnvs(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.DB.Pool.Query(r.Context(), `
 		SELECT e.name, e.mode, u.email, e.created_at, e.updated_at,
 		       s.size_bytes, s.created_at,
-		       l.holder_device_id, l.state, l.heartbeat_at
+		       l.holder_device_id, l.state, l.heartbeat_at,
+		       COALESCE(tm.name, '')
 		FROM environments e
 		JOIN users u ON u.id = e.user_id
+		LEFT JOIN teams tm ON tm.id = e.team_id
 		LEFT JOIN snapshots s ON s.id = e.latest_base_id AND s.state = 'ready'
 		LEFT JOIN leases l ON l.env_id = e.id
 		WHERE e.deleted_at IS NULL
@@ -238,17 +280,20 @@ func (s *Service) HandleEnvs(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var name, mode, email string
+		var name, mode, email, teamName string
 		var createdAt, updatedAt time.Time
 		var baseSize *int64
 		var baseAt *time.Time
 		var holder, leaseState *string
 		var heartbeat *time.Time
-		if err := rows.Scan(&name, &mode, &email, &createdAt, &updatedAt, &baseSize, &baseAt, &holder, &leaseState, &heartbeat); err != nil {
+		if err := rows.Scan(&name, &mode, &email, &createdAt, &updatedAt, &baseSize, &baseAt, &holder, &leaseState, &heartbeat, &teamName); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "scan_error", "message": err.Error()}})
 			return
 		}
 		item := map[string]any{"name": name, "mode": mode, "email": email, "createdAt": createdAt, "updatedAt": updatedAt}
+		if teamName != "" {
+			item["team"] = teamName
+		}
 		if baseAt != nil {
 			item["baseSize"] = *baseSize
 			item["baseAt"] = *baseAt

@@ -1,12 +1,12 @@
 # OneBrowser
 
-> 指纹环境 + 登录态云端共享的浏览器（V0.4.0 初步可用）
+> 指纹环境 + 登录态云端共享 + 团队协作的浏览器（V0.4.3）
 >
-> ![status](https://img.shields.io/badge/status-active--development-green) ![license](https://img.shields.io/badge/license-MIT-blue) ![e2e](https://img.shields.io/badge/e2e-64%2F64%20green-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20mac%20%7C%20Linux-blue)
+> ![status](https://img.shields.io/badge/status-active--development-green) ![license](https://img.shields.io/badge/license-MIT-blue) ![e2e](https://img.shields.io/badge/e2e-全矩阵%20green-brightgreen) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20mac%20%7C%20Linux-blue)
 >
 > **注意**：本项目处于快速迭代期（当前 V0.4），API 与快照格式可能变化；生产部署前请阅读已知限制。
 >
-> **V0.4.0（初步可用）**：Windows 为主力平台——安装包 `apps/desktop/release/*-setup.exe`（指纹 + L1 登录态漫游开箱可用）；完整 profile 漫游（L2）需 Linux/Docker 内核，Windows 原生 L2 进行中。
+> **V0.4.3（团队协作可用）**：Windows 为主力平台——安装包 `apps/desktop/release/*-setup.exe`（指纹 + 登录态漫游 + 团队共享开箱可用）；完整 profile 漫游（L2）需 Linux/Docker 内核，Windows 原生 L2 待 os_crypt 补丁进上游（材料备齐见 `scripts/kernel-build/upstream-pr/`）。
 >
 > 调研报告：[docs/research-report.md](docs/research-report.md) · 总体规划：[docs/project-plan.md](docs/project-plan.md) · 版本范围：[docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) · V0.2.0 计划：[docs/v0.2.0-plan.md](docs/v0.2.0-plan.md) · V0.3.0 计划：[docs/v0.3.0-plan.md](docs/v0.3.0-plan.md) · Windows 迁移：[docs/windows-migration.md](docs/windows-migration.md)
 
@@ -30,6 +30,10 @@
 **V0.2.0 新增**：fingerprint-chromium 指纹内核承载（同 seed 跨设备指纹一致）、双承载互迁移（builtin ⇄ kernel 登录态无缝）、每环境代理（含认证）+ auto 时区/语言（按代理出口 geo 推导）、会话健康检查（基线失效提示）、服务端快照保留策略。
 
 **V0.3.0 新增**：**L2 文件级快照**——kernel 环境以整个浏览器 profile 为快照单位（cookie/IndexedDB/Service Worker/密码库等全部站点数据随基线漫游）；容器 profile 宿主直通（-v 挂载）+ 冻结一致性抓取（docker pause）；双写策略（L2 为主 + L1 结构化副本），builtin 设备自动回退 L1，跨承载互迁移不回退。
+
+**V0.4.x 新增**：三承载（指纹内核 / 标准浏览器 = 本机 Edge/Chrome 隔离窗口 / 内置轻量）、Windows 安装包、品牌图标、`/admin` 运维工作台（`ADMIN_TOKEN` 门禁只读）、App 内检查更新（直达 Releases，签名证书到位后切全量差分）。
+
+**V0.6 团队协作**：每用户 X25519 身份密钥对 + 团队独立 DEK 成员信封——团队环境的配置与登录态用团队密钥端到端加密，成员经邀请（push 模型：邀请即包裹、接受才激活）免登录共享基线；吊销即时断云端访问，owner 可轮换团队密钥（旧基线冷启动，重新保存即恢复）；服务端全程只见公钥与密文。
 
 ## 架构（数据面为 L1 结构化）
 
@@ -93,7 +97,8 @@ pnpm --dir apps/desktop kernel-smoke  # 内核指纹冒烟（Docker）
 - **内核分发**：fingerprint-chromium 官方预编译产物 mac 为 arm64-only；Intel mac 开发机经 Docker（Linux 内核）验证（`ONEBROWSER_KERNEL_DOCKER=1`）。
 - **指纹 seed**：必须为 1~2147483647 的整数（内核要求 32 位整数；非法值会使渲染进程死锁，客户端已强校验）。
 - **Google 站点**：受 DBSC（设备绑定会话）限制，Google 登录态无法跨设备共享——这是行业级硬限制，详见调研报告 §4.3。
-- 审计界面、团队协作、安装包分发未实现。
+- **团队边界**：被移出成员在成员期内已获取的本地数据无法远程清除（端到端加密的固有性质）；硬吊销（历史快照重加密）不提供，DEK 轮换仅作加固。
+- 审计查询界面未实现（audit_log 已落库，可 SQL 导出；`/admin` 工作台只读）。
 
 ## 目录
 

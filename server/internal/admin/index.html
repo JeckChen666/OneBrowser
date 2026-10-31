@@ -91,6 +91,7 @@
   <nav class="tabs">
     <button data-tab="overview" class="on">概览</button>
     <button data-tab="users">账号</button>
+    <button data-tab="teams">团队</button>
     <button data-tab="envs">环境</button>
     <button data-tab="snapshots">快照</button>
   </nav>
@@ -111,6 +112,10 @@
   <div id="view-users" hidden>
     <div class="meta">最多显示 500 条，按注册时间倒序</div>
     <table><thead><tr><th>邮箱</th><th>注册时间</th><th>设备</th><th>环境</th><th>快照占用</th></tr></thead><tbody id="tb-users"></tbody></table>
+  </div>
+  <div id="view-teams" hidden>
+    <div class="meta">最多显示 500 条，按创建时间倒序；团队密钥信封为密文，此处不可见</div>
+    <table><thead><tr><th>团队</th><th>发起人</th><th>成员</th><th>待接受</th><th>环境</th><th>快照占用</th><th>创建时间</th></tr></thead><tbody id="tb-teams"></tbody></table>
   </div>
   <div id="view-envs" hidden>
     <div class="meta">最多显示 500 条，按更新时间倒序；环境配置（指纹/代理/种子）为端到端密文，此处不可见</div>
@@ -185,6 +190,7 @@ async function refresh() {
   try {
     if (tab === 'overview') await loadOverview()
     else if (tab === 'users') await loadUsers()
+    else if (tab === 'teams') await loadTeams()
     else if (tab === 'envs') await loadEnvs()
     else await loadSnapshots()
   } catch (e) {
@@ -195,7 +201,7 @@ async function refresh() {
 async function loadOverview() {
   const o = await api('/admin/api/overview')
   const cards = [
-    ['用户', o.users], ['环境', o.envs], ['快照（ready）', o.snapshots],
+    ['用户', o.users], ['团队', o.teams], ['环境', o.envs], ['快照（ready）', o.snapshots],
     ['快照总量', fmtBytes(o.snapBytes)], ['活跃租约', o.activeLeases], ['在线会话', o.activeSessions]
   ]
   $('statCards').innerHTML = cards.map(([k, v]) =>
@@ -221,10 +227,25 @@ async function loadUsers() {
   </tr>`).join('') || '<tr><td colspan="5" class="hint">暂无账号</td></tr>'
 }
 
+async function loadTeams() {
+  const rows = await api('/admin/api/teams')
+  $('tb-teams').innerHTML = rows.map(t => `<tr>
+    <td><b>${esc(t.name)}</b></td><td>${esc(t.ownerEmail)}</td>
+    <td class="num">${t.members}</td>
+    <td class="num">${t.pendingInvites > 0 ? `<span class="tag y">${t.pendingInvites}</span>` : '<span class="hint">0</span>'}</td>
+    <td class="num">${t.envs}</td>
+    <td class="num">${fmtBytes(t.snapBytes)}</td>
+    <td>${fmtTime(t.createdAt)}</td>
+  </tr>`).join('') || '<tr><td colspan="7" class="hint">暂无团队</td></tr>'
+}
+
 async function loadEnvs() {
   const rows = await api('/admin/api/envs')
   $('tb-envs').innerHTML = rows.map(e => {
     const mode = e.mode === 'snapshot' ? '<span class="tag g">快照</span>' : '<span class="tag y">互斥</span>'
+    const owner = e.team
+      ? `${esc(e.email)}<br><span class="tag r">👥 ${esc(e.team)}</span>`
+      : esc(e.email)
     const base = e.baseAt ? `${fmtBytes(e.baseSize)}<br><span class="hint">${fmtTime(e.baseAt)}</span>` : '<span class="hint">无基线</span>'
     let lease = '<span class="hint">空闲</span>'
     if (e.lease) {
@@ -232,7 +253,7 @@ async function loadEnvs() {
       lease = `<span class="tag ${evicting ? 'r' : 'b'}">${evicting ? '交接中' : '占用中'}</span>
         <span class="hint"> 设备 ${esc(e.lease.holder)}</span>`
     }
-    return `<tr><td><b>${esc(e.name)}</b></td><td>${mode}</td><td>${esc(e.email)}</td>
+    return `<tr><td><b>${esc(e.name)}</b></td><td>${mode}</td><td>${owner}</td>
       <td>${base}</td><td>${lease}</td><td>${fmtTime(e.updatedAt)}</td></tr>`
   }).join('') || '<tr><td colspan="6" class="hint">暂无环境</td></tr>'
 }
