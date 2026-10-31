@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AppService } from './core/appService'
+import { startAutoUpdater } from './core/autoUpdate'
 import { checkUpdate, openExternal } from './updater'
 import type { CreateEnvInput, MainEvent, ProxyConfig } from '@shared/types'
 
@@ -296,6 +297,9 @@ app.whenReady().then(async () => {
   })
 
   createManager()
+
+  // V0.5-C 阶段 b（默认休眠）：ONEBROWSER_AUTO_UPDATE=1 且打包形态才启用全量差分更新
+  void startAutoUpdater(sendEvent)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().filter((w) => w !== managerWin).length === 0 && !managerWin) createManager()
